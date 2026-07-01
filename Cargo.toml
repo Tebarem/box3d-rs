@@ -3,6 +3,21 @@ name = "box3d-sys"
 version = "0.1.0"
 edition = "2021"
 links = "box3d"
+description = "Raw Rust FFI bindings for Box3D."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/Tebarem/box3d-rs"
+include = [
+    "Cargo.toml",
+    "README.md",
+    "build.rs",
+    "wrapper.h",
+    "src/**",
+    "vendor/box3d/CMakeLists.txt",
+    "vendor/box3d/LICENSE",
+    "vendor/box3d/include/**",
+    "vendor/box3d/src/**",
+]
 
 [features]
 default = ["build-from-source"]
