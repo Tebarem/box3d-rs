@@ -4,8 +4,12 @@ version = "0.1.0"
 edition = "2021"
 links = "box3d"
 
+[features]
+default = ["build-from-source"]
+build-from-source = ["dep:cmake"]
+
 [dependencies]
 
 [build-dependencies]
 bindgen = "0.72"
-cmake = "0.1"
+cmake = { version = "0.1", optional = true }
