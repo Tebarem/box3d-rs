@@ -28,11 +28,19 @@ fn main() {
         .define("BOX3D_VALIDATE", "OFF")
         .build();
 
-    println!(
-        "cargo:rustc-link-search=native={}",
-        dst.join("lib").display()
-    );
+    let lib_dir = if dst.join("lib64").exists() {
+        dst.join("lib64")
+    } else {
+        dst.join("lib")
+    };
+
+    println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=static=box3d");
+
+    let target = env::var("TARGET").unwrap();
+    if target.contains("linux") || target.contains("freebsd") || target.contains("dragonfly") {
+        println!("cargo:rustc-link-lib=m");
+    }
 
     let include_dir = box3d_dir.join("include");
     let bindings = bindgen::Builder::default()
