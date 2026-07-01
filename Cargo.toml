@@ -19,6 +19,10 @@ include = [
     "vendor/box3d/src/**",
 ]
 
+[workspace]
+members = ["box3d"]
+resolver = "2"
+
 [features]
 default = ["build-from-source"]
 build-from-source = ["dep:cmake"]
