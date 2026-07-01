@@ -1,6 +1,11 @@
 [package]
 name = "box3d-sys"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+links = "box3d"
 
 [dependencies]
+
+[build-dependencies]
+bindgen = "0.72"
+cmake = "0.1"
