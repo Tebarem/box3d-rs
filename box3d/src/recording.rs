@@ -2,11 +2,7 @@ use std::{ffi::c_void, ptr::NonNull, slice};
 
 use box3d_sys as sys;
 
-use crate::{
-    math::{Aabb, Vec3},
-    world::World,
-    Error, Result,
-};
+use crate::{math::Aabb, world::World, Error, Result};
 
 pub struct Recording {
     raw: NonNull<sys::b3Recording>,
@@ -181,7 +177,7 @@ fn worker_count_i32(count: u32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BodyDef, ShapeDef};
+    use crate::{BodyDef, ShapeDef, Vec3};
 
     #[test]
     fn records_and_replays_tiny_world() {
