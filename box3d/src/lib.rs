@@ -55,7 +55,9 @@ pub use query::{
 pub use recording::{validate_replay, RecPlayer, RecPlayerInfo, Recording};
 pub use shape::{Shape, ShapeDef, ShapeType};
 pub use tasks::MAX_WORKERS;
-pub use world::{Counters, Profile, World};
+pub use world::{
+    max_world_count, world_count, Capacity, ContactTuning, Counters, ExplosionDef, Profile, World,
+};
 
 #[cfg(test)]
 mod tests {
