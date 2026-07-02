@@ -12,7 +12,9 @@ mod joint;
 mod math;
 mod mesh;
 mod query;
+mod recording;
 mod shape;
+mod tasks;
 mod world;
 
 pub use body::{Body, BodyDef, BodyType};
@@ -41,7 +43,9 @@ pub use mesh::{HeightField, Mesh};
 pub use query::{
     CastHit, MoverPlane, Plane, QueryFilter, QueryStats, RayHit, ShapeProxy, ShapeRef,
 };
+pub use recording::{validate_replay, RecPlayer, RecPlayerInfo, Recording};
 pub use shape::{Shape, ShapeDef, ShapeType};
+pub use tasks::MAX_WORKERS;
 pub use world::{Counters, Profile, World};
 
 #[cfg(test)]
