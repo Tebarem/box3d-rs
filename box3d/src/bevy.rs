@@ -87,6 +87,7 @@ impl bevy_app::Plugin for Box3dPlugin {
                 (
                     create_box3d_bodies,
                     sync_velocity_to_box3d,
+                    sync_damping_to_box3d,
                     sync_static_transforms_to_box3d,
                     step_box3d_world,
                     sync_box3d_to_transforms,
@@ -183,6 +184,13 @@ impl Velocity {
     }
 }
 
+/// Linear and angular damping synced into Box3D.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Component)]
+pub struct Damping {
+    pub linear: f32,
+    pub angular: f32,
+}
+
 /// Native Box3D body created for an entity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Component)]
 pub struct Box3dBody {
@@ -250,11 +258,12 @@ fn create_box3d_bodies(
             Option<&Collider>,
             Option<&bevy_transform::prelude::Transform>,
             Option<&Velocity>,
+            Option<&Damping>,
         ),
         bevy_ecs::prelude::Without<Box3dBody>,
     >,
 ) {
-    for (entity, rigid_body, collider, transform, velocity) in &query {
+    for (entity, rigid_body, collider, transform, velocity, damping) in &query {
         let start = transform
             .map(bevy_transform_to_box3d)
             .unwrap_or(crate::Transform::IDENTITY);
@@ -268,6 +277,10 @@ fn create_box3d_bodies(
         if let Some(velocity) = velocity {
             body.set_linear_velocity(velocity.linear);
             body.set_angular_velocity(velocity.angular);
+        }
+        if let Some(damping) = damping {
+            body.set_linear_damping(damping.linear);
+            body.set_angular_damping(damping.angular);
         }
 
         let body_id = body.id();
@@ -322,6 +335,30 @@ fn sync_velocity_to_box3d(
         unsafe {
             sys::b3Body_SetLinearVelocity(raw, velocity.linear.into());
             sys::b3Body_SetAngularVelocity(raw, velocity.angular.into());
+        }
+    }
+}
+
+#[cfg(feature = "bevy")]
+#[allow(clippy::type_complexity)]
+fn sync_damping_to_box3d(
+    physics: bevy_ecs::prelude::NonSend<Box3dWorld>,
+    query: bevy_ecs::prelude::Query<
+        (Entity, &Damping),
+        (
+            bevy_ecs::prelude::With<Box3dBody>,
+            bevy_ecs::prelude::Changed<Damping>,
+        ),
+    >,
+) {
+    for (entity, damping) in &query {
+        let Some(raw) = physics.body(entity) else {
+            continue;
+        };
+
+        unsafe {
+            sys::b3Body_SetLinearDamping(raw, damping.linear);
+            sys::b3Body_SetAngularDamping(raw, damping.angular);
         }
     }
 }
