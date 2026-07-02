@@ -2,6 +2,7 @@ mod body;
 mod character;
 mod collision;
 mod compound;
+mod debug_draw;
 mod error;
 mod events;
 mod handle;
@@ -20,6 +21,7 @@ pub use collision::{
     ShapeCastOutput, SimpleShape, Sphere,
 };
 pub use compound::{Compound, CompoundPart};
+pub use debug_draw::{DebugDraw, DEFAULT_DEBUG_MASK};
 pub use error::{Error, Result};
 pub use events::{
     BodyEvents, BodyId, BodyMoveEvent, ContactEvents, ContactHitEvent, ContactId,
