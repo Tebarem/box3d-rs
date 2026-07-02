@@ -60,6 +60,15 @@ impl Default for Box3dConfig {
     }
 }
 
+/// Last plugin step statistics.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Resource)]
+pub struct Box3dStats {
+    pub body_count: usize,
+    pub step_count: u32,
+    pub step_ms: f64,
+    pub time_step: f32,
+}
+
 /// Bevy plugin for Box3D world ownership, body creation, stepping, and transform sync.
 #[cfg(feature = "bevy")]
 #[derive(Clone, Copy, Debug, Default)]
@@ -71,6 +80,7 @@ pub struct Box3dPlugin {
 impl bevy_app::Plugin for Box3dPlugin {
     fn build(&self, app: &mut bevy_app::App) {
         app.insert_resource(self.config)
+            .insert_resource(Box3dStats::default())
             .insert_non_send_resource(Box3dWorld::new(self.config))
             .add_systems(
                 bevy_app::Update,
@@ -344,6 +354,7 @@ fn sync_static_transforms_to_box3d(
 #[cfg(feature = "bevy")]
 fn step_box3d_world(
     config: bevy_ecs::prelude::Res<Box3dConfig>,
+    mut stats: bevy_ecs::prelude::ResMut<Box3dStats>,
     mut physics: bevy_ecs::prelude::NonSendMut<Box3dWorld>,
 ) {
     physics.world.set_gravity(config.gravity);
@@ -362,9 +373,18 @@ fn step_box3d_world(
         }
     };
 
+    let started = std::time::Instant::now();
+    let mut step_count = 0;
+
     if time_step > 0.0 {
         physics.world.step(time_step, config.sub_steps);
+        step_count = 1;
     }
+
+    stats.body_count = physics.bodies.len();
+    stats.step_count = step_count;
+    stats.step_ms = started.elapsed().as_secs_f64() * 1000.0;
+    stats.time_step = time_step.max(0.0);
 }
 
 #[cfg(feature = "bevy")]
@@ -496,6 +516,8 @@ mod tests {
 
         let entity_ref = app.world().entity(entity);
         assert!(entity_ref.contains::<Box3dBody>());
+        assert_eq!(app.world().resource::<Box3dStats>().step_count, 1);
+        assert_eq!(app.world().resource::<Box3dStats>().body_count, 1);
         assert!(
             entity_ref
                 .get::<bevy_transform::prelude::Transform>()
