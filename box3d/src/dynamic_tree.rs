@@ -1,8 +1,10 @@
 use std::{
     any::Any,
+    collections::HashSet,
     ffi::{c_void, CString},
     panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
     path::Path,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use box3d_sys as sys;
@@ -16,6 +18,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TreeProxy {
     id: i32,
+    tree_id: u64,
 }
 
 impl TreeProxy {
@@ -60,6 +63,8 @@ pub struct TreeCastHit<T> {
 
 pub struct DynamicTree {
     raw: sys::b3DynamicTree,
+    proxies: HashSet<i32>,
+    tree_id: u64,
 }
 
 impl DynamicTree {
@@ -74,50 +79,78 @@ impl DynamicTree {
 
         Ok(Self {
             raw: unsafe { sys::b3DynamicTree_Create(proxy_capacity) },
+            proxies: HashSet::new(),
+            tree_id: next_tree_id(),
         })
     }
 
     pub fn create_proxy(&mut self, aabb: Aabb, category_bits: u64, user_data: u64) -> TreeProxy {
         assert_valid_aabb(aabb);
-        TreeProxy {
+        let proxy = TreeProxy {
             id: unsafe {
                 sys::b3DynamicTree_CreateProxy(&mut self.raw, aabb.into(), category_bits, user_data)
             },
+            tree_id: self.tree_id,
+        };
+        self.proxies.insert(proxy.id);
+        proxy
+    }
+
+    pub fn proxy_from_id(&self, id: i32) -> Result<TreeProxy> {
+        if self.proxies.contains(&id) {
+            Ok(TreeProxy {
+                id,
+                tree_id: self.tree_id,
+            })
+        } else {
+            Err(Error::InvalidInput)
         }
     }
 
-    pub fn destroy_proxy(&mut self, proxy: TreeProxy) {
-        unsafe { sys::b3DynamicTree_DestroyProxy(&mut self.raw, proxy.id) };
+    pub fn destroy_proxy(&mut self, proxy: TreeProxy) -> Result<()> {
+        let proxy_id = self.proxy_id(proxy)?;
+        unsafe { sys::b3DynamicTree_DestroyProxy(&mut self.raw, proxy_id) };
+        self.proxies.remove(&proxy_id);
+        Ok(())
     }
 
-    pub fn move_proxy(&mut self, proxy: TreeProxy, aabb: Aabb) {
+    pub fn move_proxy(&mut self, proxy: TreeProxy, aabb: Aabb) -> Result<()> {
         assert_valid_aabb(aabb);
-        unsafe { sys::b3DynamicTree_MoveProxy(&mut self.raw, proxy.id, aabb.into()) };
+        let proxy_id = self.proxy_id(proxy)?;
+        unsafe { sys::b3DynamicTree_MoveProxy(&mut self.raw, proxy_id, aabb.into()) };
+        Ok(())
     }
 
-    pub fn enlarge_proxy(&mut self, proxy: TreeProxy, aabb: Aabb) {
+    pub fn enlarge_proxy(&mut self, proxy: TreeProxy, aabb: Aabb) -> Result<()> {
         assert_valid_aabb(aabb);
-        unsafe { sys::b3DynamicTree_EnlargeProxy(&mut self.raw, proxy.id, aabb.into()) };
+        let proxy_id = self.proxy_id(proxy)?;
+        unsafe { sys::b3DynamicTree_EnlargeProxy(&mut self.raw, proxy_id, aabb.into()) };
+        Ok(())
     }
 
-    pub fn set_category_bits(&mut self, proxy: TreeProxy, category_bits: u64) {
-        unsafe { sys::b3DynamicTree_SetCategoryBits(&mut self.raw, proxy.id, category_bits) };
+    pub fn set_category_bits(&mut self, proxy: TreeProxy, category_bits: u64) -> Result<()> {
+        let proxy_id = self.proxy_id(proxy)?;
+        unsafe { sys::b3DynamicTree_SetCategoryBits(&mut self.raw, proxy_id, category_bits) };
+        Ok(())
     }
 
-    pub fn category_bits(&mut self, proxy: TreeProxy) -> u64 {
-        unsafe { sys::b3DynamicTree_GetCategoryBits(&mut self.raw, proxy.id) }
+    pub fn category_bits(&mut self, proxy: TreeProxy) -> Result<u64> {
+        let proxy_id = self.proxy_id(proxy)?;
+        Ok(unsafe { sys::b3DynamicTree_GetCategoryBits(&mut self.raw, proxy_id) })
     }
 
-    pub fn user_data(&self, proxy: TreeProxy) -> u64 {
-        unsafe {
-            (*self.raw.nodes.add(proxy.id as usize))
+    pub fn user_data(&self, proxy: TreeProxy) -> Result<u64> {
+        let proxy_id = self.proxy_id(proxy)?;
+        Ok(unsafe {
+            (*self.raw.nodes.add(proxy_id as usize))
                 .__bindgen_anon_1
                 .userData
-        }
+        })
     }
 
-    pub fn aabb(&self, proxy: TreeProxy) -> Aabb {
-        unsafe { (*self.raw.nodes.add(proxy.id as usize)).aabb }.into()
+    pub fn aabb(&self, proxy: TreeProxy) -> Result<Aabb> {
+        let proxy_id = self.proxy_id(proxy)?;
+        Ok(unsafe { (*self.raw.nodes.add(proxy_id as usize)).aabb }.into())
     }
 
     pub fn query<F>(
@@ -134,6 +167,7 @@ impl DynamicTree {
         let mut context = QueryContext {
             f: &mut f,
             panic: None,
+            tree_id: self.tree_id,
         };
         let stats = unsafe {
             sys::b3DynamicTree_Query(
@@ -166,6 +200,7 @@ impl DynamicTree {
         let mut context = ClosestContext {
             f: &mut f,
             panic: None,
+            tree_id: self.tree_id,
         };
         let stats = unsafe {
             sys::b3DynamicTree_QueryClosest(
@@ -196,6 +231,7 @@ impl DynamicTree {
         let mut context = RayCastContext {
             f: &mut f,
             panic: None,
+            tree_id: self.tree_id,
         };
         let stats = unsafe {
             sys::b3DynamicTree_RayCast(
@@ -225,6 +261,7 @@ impl DynamicTree {
         let mut context = BoxCastContext {
             f: &mut f,
             panic: None,
+            tree_id: self.tree_id,
         };
         let stats = unsafe {
             sys::b3DynamicTree_BoxCast(
@@ -274,10 +311,20 @@ impl DynamicTree {
 
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         let raw_path = path_to_cstring(&path)?;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path.as_ref())
+            .map_err(|_| Error::InvalidInput)?;
+        drop(file);
         unsafe { sys::b3DynamicTree_Save(&self.raw, raw_path.as_ptr()) };
-        std::fs::metadata(path.as_ref())
-            .map(|_| ())
-            .map_err(|_| Error::InvalidInput)
+        let metadata = std::fs::metadata(path.as_ref()).map_err(|_| Error::InvalidInput)?;
+        if metadata.is_file() && metadata.len() > 0 {
+            Ok(())
+        } else {
+            Err(Error::InvalidInput)
+        }
     }
 
     pub fn load(path: impl AsRef<Path>, scale: f32) -> Result<Self> {
@@ -287,7 +334,20 @@ impl DynamicTree {
         if raw.version == 0 {
             Err(Error::InvalidInput)
         } else {
-            Ok(Self { raw })
+            let proxies = live_proxy_ids(&raw);
+            Ok(Self {
+                raw,
+                proxies,
+                tree_id: next_tree_id(),
+            })
+        }
+    }
+
+    fn proxy_id(&self, proxy: TreeProxy) -> Result<i32> {
+        if proxy.tree_id == self.tree_id && self.proxies.contains(&proxy.id) {
+            Ok(proxy.id)
+        } else {
+            Err(Error::InvalidInput)
         }
     }
 }
@@ -373,6 +433,7 @@ type CallbackPanic = Box<dyn Any + Send + 'static>;
 struct QueryContext<'a, F> {
     f: &'a mut F,
     panic: Option<CallbackPanic>,
+    tree_id: u64,
 }
 
 unsafe extern "C" fn query_callback<F>(proxy_id: i32, user_data: u64, context: *mut c_void) -> bool
@@ -386,7 +447,10 @@ where
 
     match catch_unwind(AssertUnwindSafe(|| {
         (context.f)(TreeHit {
-            proxy: TreeProxy { id: proxy_id },
+            proxy: TreeProxy {
+                id: proxy_id,
+                tree_id: context.tree_id,
+            },
             user_data,
         })
     })) {
@@ -401,6 +465,7 @@ where
 struct ClosestContext<'a, F> {
     f: &'a mut F,
     panic: Option<CallbackPanic>,
+    tree_id: u64,
 }
 
 unsafe extern "C" fn closest_callback<F>(
@@ -420,7 +485,10 @@ where
     match catch_unwind(AssertUnwindSafe(|| {
         (context.f)(TreeClosestHit {
             distance_sqr_min,
-            proxy: TreeProxy { id: proxy_id },
+            proxy: TreeProxy {
+                id: proxy_id,
+                tree_id: context.tree_id,
+            },
             user_data,
         })
     })) {
@@ -435,6 +503,7 @@ where
 struct RayCastContext<'a, F> {
     f: &'a mut F,
     panic: Option<CallbackPanic>,
+    tree_id: u64,
 }
 
 unsafe extern "C" fn ray_cast_callback<F>(
@@ -454,7 +523,10 @@ where
     match catch_unwind(AssertUnwindSafe(|| {
         (context.f)(TreeCastHit {
             input: unsafe { (*input).into() },
-            proxy: TreeProxy { id: proxy_id },
+            proxy: TreeProxy {
+                id: proxy_id,
+                tree_id: context.tree_id,
+            },
             user_data,
         })
     })) {
@@ -469,6 +541,7 @@ where
 struct BoxCastContext<'a, F> {
     f: &'a mut F,
     panic: Option<CallbackPanic>,
+    tree_id: u64,
 }
 
 unsafe extern "C" fn box_cast_callback<F>(
@@ -488,7 +561,10 @@ where
     match catch_unwind(AssertUnwindSafe(|| {
         (context.f)(TreeCastHit {
             input: unsafe { (*input).into() },
-            proxy: TreeProxy { id: proxy_id },
+            proxy: TreeProxy {
+                id: proxy_id,
+                tree_id: context.tree_id,
+            },
             user_data,
         })
     })) {
@@ -523,6 +599,22 @@ fn path_to_cstring(path: impl AsRef<Path>) -> Result<CString> {
     CString::new(path).map_err(|_| Error::InvalidInput)
 }
 
+fn live_proxy_ids(raw: &sys::b3DynamicTree) -> HashSet<i32> {
+    let mut proxies = HashSet::new();
+    for proxy_id in 0..raw.nodeCapacity {
+        let node = unsafe { *raw.nodes.add(proxy_id as usize) };
+        if node.flags & sys::b3TreeNodeFlags_b3_leafNode as u16 != 0 {
+            proxies.insert(proxy_id);
+        }
+    }
+    proxies
+}
+
+fn next_tree_id() -> u64 {
+    static NEXT_TREE_ID: AtomicU64 = AtomicU64::new(1);
+    NEXT_TREE_ID.fetch_add(1, Ordering::Relaxed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -552,11 +644,11 @@ mod tests {
         );
 
         assert_eq!(tree.proxy_count(), 2);
-        assert_eq!(tree.user_data(proxy_a), 11);
-        assert_eq!(tree.category_bits(proxy_b), 0x2);
-        tree.set_category_bits(proxy_b, 0x4);
-        assert_eq!(tree.category_bits(proxy_b), 0x4);
-        assert_eq!(tree.aabb(proxy_a), aabb(-1.0, 1.0));
+        assert_eq!(tree.user_data(proxy_a).unwrap(), 11);
+        assert_eq!(tree.category_bits(proxy_b).unwrap(), 0x2);
+        tree.set_category_bits(proxy_b, 0x4).unwrap();
+        assert_eq!(tree.category_bits(proxy_b).unwrap(), 0x4);
+        assert_eq!(tree.aabb(proxy_a).unwrap(), aabb(-1.0, 1.0));
 
         let mut hits = Vec::new();
         let stats = tree.query(aabb(-2.0, 2.0), u64::MAX, false, |hit| {
@@ -566,6 +658,13 @@ mod tests {
         assert_eq!(hits, vec![11]);
         assert!(stats.node_visits > 0);
 
+        let mut stopped = 0;
+        tree.query(aabb(-10.0, 10.0), 0x1, true, |_| {
+            stopped += 1;
+            false
+        });
+        assert_eq!(stopped, 1);
+
         let (_, min_sqr) = tree.query_closest(Vec3::ZERO, u64::MAX, false, f32::INFINITY, |hit| {
             assert_eq!(hit.user_data, 11);
             0.0
@@ -573,38 +672,41 @@ mod tests {
         assert_eq!(min_sqr, 0.0);
 
         let mut ray_hits = Vec::new();
-        tree.ray_cast(
+        let ray_stats = tree.ray_cast(
             TreeRayCastInput::new(Vec3::new(-5.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0), 1.0),
             u64::MAX,
             false,
             |hit| {
                 ray_hits.push(hit.user_data);
-                hit.input.max_fraction
+                0.0_f32.min(hit.input.max_fraction)
             },
         );
-        assert!(ray_hits.contains(&11));
+        assert_eq!(ray_hits.len(), 1);
+        assert_eq!(ray_stats.leaf_visits, 1);
 
         let mut box_hits = Vec::new();
-        tree.box_cast(
+        let box_stats = tree.box_cast(
             TreeBoxCastInput::new(aabb(-0.25, 0.25), Vec3::new(4.0, 0.0, 0.0), 1.0),
             u64::MAX,
             false,
             |hit| {
                 box_hits.push(hit.user_data);
-                hit.input.max_fraction
+                0.0_f32.min(hit.input.max_fraction)
             },
         );
-        assert!(box_hits.contains(&11));
+        assert_eq!(box_hits.len(), 1);
+        assert_eq!(box_stats.leaf_visits, 1);
 
-        tree.move_proxy(proxy_a, aabb(5.0, 6.0));
-        assert_eq!(tree.aabb(proxy_a), aabb(5.0, 6.0));
+        tree.move_proxy(proxy_a, aabb(5.0, 6.0)).unwrap();
+        assert_eq!(tree.aabb(proxy_a).unwrap(), aabb(5.0, 6.0));
         tree.enlarge_proxy(
             proxy_a,
             Aabb {
                 lower_bound: Vec3::new(4.0, 4.0, 4.0),
                 upper_bound: Vec3::new(7.0, 7.0, 7.0),
             },
-        );
+        )
+        .unwrap();
         assert_eq!(tree.rebuild(true), 2);
         tree.validate();
         tree.validate_no_enlarged();
@@ -618,11 +720,51 @@ mod tests {
         let loaded = DynamicTree::load(&path, 1.0).unwrap();
         fs::remove_file(&path).unwrap();
         assert_eq!(loaded.proxy_count(), 2);
-        assert_eq!(loaded.user_data(proxy_b), 22);
+        let loaded_proxy_b = loaded.proxy_from_id(proxy_b.id()).unwrap();
+        assert_eq!(loaded.user_data(loaded_proxy_b).unwrap(), 22);
 
-        tree.destroy_proxy(proxy_a);
-        tree.destroy_proxy(proxy_b);
+        tree.destroy_proxy(proxy_a).unwrap();
+        assert_eq!(tree.user_data(proxy_a).err(), Some(Error::InvalidInput));
+        tree.destroy_proxy(proxy_b).unwrap();
         assert_eq!(tree.proxy_count(), 0);
+    }
+
+    #[test]
+    fn dynamic_tree_rejects_foreign_and_destroyed_proxies() {
+        let mut tree_a = DynamicTree::new(1);
+        let mut tree_b = DynamicTree::new(1);
+        let proxy_a = tree_a.create_proxy(aabb(-1.0, 1.0), 0x1, 11);
+        let proxy_b = tree_b.create_proxy(aabb(-1.0, 1.0), 0x1, 22);
+
+        assert_eq!(tree_a.user_data(proxy_b).err(), Some(Error::InvalidInput));
+        tree_a.destroy_proxy(proxy_a).unwrap();
+        assert_eq!(tree_a.user_data(proxy_a).err(), Some(Error::InvalidInput));
+        assert_eq!(
+            tree_a.destroy_proxy(proxy_a).err(),
+            Some(Error::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn dynamic_tree_callbacks_resume_panics() {
+        let mut tree = DynamicTree::new(1);
+        tree.create_proxy(aabb(-1.0, 1.0), 0x1, 11);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tree.query(aabb(-2.0, 2.0), u64::MAX, false, |_| panic!("boom"));
+        }));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn dynamic_tree_save_directory_returns_error() {
+        let tree = DynamicTree::new(1);
+
+        assert_eq!(
+            tree.save(std::env::temp_dir()).err(),
+            Some(Error::InvalidInput)
+        );
     }
 
     fn tree_path() -> std::path::PathBuf {
