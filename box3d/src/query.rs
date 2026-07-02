@@ -9,8 +9,9 @@ use std::{
 use box3d_sys as sys;
 
 use crate::{
+    body::Body,
     handle,
-    math::{Aabb, Vec3},
+    math::{Aabb, Transform, Vec3},
     world::World,
     Error, Result,
 };
@@ -171,6 +172,29 @@ pub struct CastHit<'a> {
     pub child_index: i32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BodyClosestPoint {
+    pub point: Vec3,
+    pub distance: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BodyCastHit<'a> {
+    pub shape: ShapeRef<'a>,
+    pub point: Vec3,
+    pub normal: Vec3,
+    pub user_material_id: u64,
+    pub fraction: f32,
+    pub triangle_index: i32,
+    pub iterations: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BodyPlane<'a> {
+    pub shape: ShapeRef<'a>,
+    pub plane: MoverPlane,
+}
+
 type CallbackPanic = Box<dyn Any + Send + 'static>;
 
 struct ShapeCallbackContext<'a, F> {
@@ -310,6 +334,29 @@ impl RayHit {
             node_visits: value.nodeVisits,
             leaf_visits: value.leafVisits,
         })
+    }
+}
+
+impl BodyCastHit<'_> {
+    fn from_raw(value: sys::b3BodyCastResult) -> Option<Self> {
+        value.hit.then(|| Self {
+            shape: ShapeRef::from_raw(value.shapeId),
+            point: value.point.into(),
+            normal: value.normal.into(),
+            user_material_id: value.userMaterialId,
+            fraction: value.fraction,
+            triangle_index: value.triangleIndex,
+            iterations: value.iterations,
+        })
+    }
+}
+
+impl BodyPlane<'_> {
+    fn from_raw(value: sys::b3BodyPlaneResult) -> Self {
+        Self {
+            shape: ShapeRef::from_raw(value.shapeId),
+            plane: value.result.into(),
+        }
     }
 }
 
@@ -525,6 +572,122 @@ impl World {
     }
 }
 
+impl Body<'_> {
+    pub fn compute_aabb(&self) -> Aabb {
+        unsafe { sys::b3Body_ComputeAABB(self.raw()) }.into()
+    }
+
+    pub fn closest_point(&self, target: Vec3) -> BodyClosestPoint {
+        let mut point = sys::b3Vec3::default();
+        let distance =
+            unsafe { sys::b3Body_GetClosestPoint(self.raw(), &mut point, target.into()) };
+        BodyClosestPoint {
+            point: point.into(),
+            distance,
+        }
+    }
+
+    pub fn cast_ray_at_transform(
+        &self,
+        origin: Vec3,
+        translation: Vec3,
+        filter: QueryFilter,
+        max_fraction: f32,
+        body_transform: Transform,
+    ) -> Option<BodyCastHit<'_>> {
+        assert!(max_fraction.is_finite() && (0.0..=1.0).contains(&max_fraction));
+        BodyCastHit::from_raw(unsafe {
+            sys::b3Body_CastRay(
+                self.raw(),
+                origin.into(),
+                translation.into(),
+                filter.into(),
+                max_fraction,
+                body_transform.into(),
+            )
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn cast_shape_at_transform(
+        &self,
+        origin: Vec3,
+        proxy: ShapeProxy<'_>,
+        translation: Vec3,
+        filter: QueryFilter,
+        max_fraction: f32,
+        can_encroach: bool,
+        body_transform: Transform,
+    ) -> Option<BodyCastHit<'_>> {
+        assert!(max_fraction.is_finite() && (0.0..=1.0).contains(&max_fraction));
+        let raw_points = proxy.raw_points();
+        let raw_proxy = proxy.raw(&raw_points);
+        BodyCastHit::from_raw(unsafe {
+            sys::b3Body_CastShape(
+                self.raw(),
+                origin.into(),
+                &raw_proxy,
+                translation.into(),
+                filter.into(),
+                max_fraction,
+                can_encroach,
+                body_transform.into(),
+            )
+        })
+    }
+
+    pub fn overlap_shape_at_transform(
+        &self,
+        origin: Vec3,
+        proxy: ShapeProxy<'_>,
+        filter: QueryFilter,
+        body_transform: Transform,
+    ) -> bool {
+        let raw_points = proxy.raw_points();
+        let raw_proxy = proxy.raw(&raw_points);
+        unsafe {
+            sys::b3Body_OverlapShape(
+                self.raw(),
+                origin.into(),
+                &raw_proxy,
+                filter.into(),
+                body_transform.into(),
+            )
+        }
+    }
+
+    pub fn collide_mover_at_transform(
+        &self,
+        origin: Vec3,
+        points: [Vec3; 2],
+        radius: f32,
+        filter: QueryFilter,
+        body_transform: Transform,
+        plane_capacity: usize,
+    ) -> Vec<BodyPlane<'_>> {
+        if plane_capacity == 0 {
+            return Vec::new();
+        }
+
+        let capacity = plane_capacity.min(i32::MAX as usize) as i32;
+        let mover = raw_mover(points, radius);
+        let mut planes = vec![sys::b3BodyPlaneResult::default(); capacity as usize];
+        let count = unsafe {
+            sys::b3Body_CollideMover(
+                self.raw(),
+                planes.as_mut_ptr(),
+                capacity,
+                origin.into(),
+                &mover,
+                filter.into(),
+                body_transform.into(),
+            )
+        };
+        planes.truncate(count.max(0) as usize);
+        planes.into_iter().map(BodyPlane::from_raw).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -699,5 +862,66 @@ mod tests {
 
         assert!(count >= 1);
         assert!(saw_top_face);
+    }
+
+    #[test]
+    fn body_queries_hit_attached_shape() {
+        let world = World::new(Vec3::ZERO);
+        let body = world.create_body(BodyDef::static_at(Vec3::ZERO));
+        let _shape = body.create_box(Vec3::new(0.5, 0.5, 0.5), ShapeDef::default());
+        let transform = body.transform();
+
+        let aabb = body.compute_aabb();
+        assert!(aabb.lower_bound.x < 0.0 && aabb.upper_bound.x > 0.0);
+
+        let closest = body.closest_point(Vec3::new(2.0, 0.0, 0.0));
+        assert!((closest.point.x - 0.5).abs() < 0.01, "{closest:?}");
+        assert!(closest.distance > 0.0, "{closest:?}");
+
+        let ray_hit = body
+            .cast_ray_at_transform(
+                Vec3::new(-3.0, 0.0, 0.0),
+                Vec3::new(6.0, 0.0, 0.0),
+                QueryFilter::default(),
+                1.0,
+                transform,
+            )
+            .expect("ray should hit body");
+        assert!(ray_hit.shape.is_valid());
+        assert!(ray_hit.fraction > 0.0 && ray_hit.fraction < 1.0);
+
+        let points = [Vec3::ZERO];
+        let proxy = ShapeProxy::new(&points, 0.25).unwrap();
+        let shape_hit = body
+            .cast_shape_at_transform(
+                Vec3::new(-3.0, 0.0, 0.0),
+                proxy,
+                Vec3::new(6.0, 0.0, 0.0),
+                QueryFilter::default(),
+                1.0,
+                false,
+                transform,
+            )
+            .expect("shape cast should hit body");
+        assert!(shape_hit.shape.is_valid());
+        assert!(shape_hit.fraction > 0.0 && shape_hit.fraction < 1.0);
+
+        let overlap_proxy = ShapeProxy::new(&points, 1.0).unwrap();
+        assert!(body.overlap_shape_at_transform(
+            Vec3::ZERO,
+            overlap_proxy,
+            QueryFilter::default(),
+            transform
+        ));
+
+        let planes = body.collide_mover_at_transform(
+            Vec3::ZERO,
+            [Vec3::new(-0.3, 0.6, 0.0), Vec3::new(0.3, 0.6, 0.0)],
+            0.2,
+            QueryFilter::default(),
+            transform,
+            8,
+        );
+        assert!(planes.iter().any(|plane| plane.shape.is_valid()));
     }
 }

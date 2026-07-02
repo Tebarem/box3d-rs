@@ -25,7 +25,7 @@ pub use base::{
     milliseconds_and_reset, set_length_units_per_meter, set_stall_threshold, sleep,
     stall_threshold, ticks, version, yield_now, Version, HASH_INIT,
 };
-pub use body::{Body, BodyDef, BodyType};
+pub use body::{Body, BodyDef, BodyType, ContactData, ContactManifold, ContactPoint, MotionLocks};
 pub use callbacks::PreSolveContact;
 pub use character::{clip_vector, solve_planes, CollisionPlane, MoverCapsule};
 pub use collision::{
@@ -50,7 +50,8 @@ pub use joint::{
 pub use math::{Aabb, Filter, MassData, Matrix3, Quat, SurfaceMaterial, Transform, Vec3};
 pub use mesh::{HeightField, Mesh};
 pub use query::{
-    CastHit, MoverPlane, Plane, QueryFilter, QueryStats, RayHit, ShapeProxy, ShapeRef,
+    BodyCastHit, BodyClosestPoint, BodyPlane, CastHit, MoverPlane, Plane, QueryFilter, QueryStats,
+    RayHit, ShapeProxy, ShapeRef,
 };
 pub use recording::{validate_replay, RecPlayer, RecPlayerInfo, Recording};
 pub use shape::{Shape, ShapeDef, ShapeType};
