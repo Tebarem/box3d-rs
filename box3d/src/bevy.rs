@@ -3,17 +3,19 @@
 //! This module is available with the `bevy_ecs` feature. The `bevy` feature
 //! enables [`Box3dPlugin`] and transform syncing.
 
-use std::collections::HashMap;
-
-use bevy_ecs::prelude::{Component, Entity, Resource};
+#[cfg(feature = "bevy")]
+use bevy_ecs::prelude::Entity;
+use bevy_ecs::prelude::{Component, Resource};
 #[cfg(feature = "bevy")]
 use bevy_ecs::schedule::IntoScheduleConfigs;
+#[cfg(feature = "bevy")]
 use box3d_sys as sys;
 
-use crate::{
-    handle, BodyDef, BodyId, BodyType, Capacity, Quat, ShapeDef, ShapeId, SurfaceMaterial, Vec3,
-    World,
-};
+#[cfg(feature = "bevy")]
+use crate::{handle, BodyDef, Quat, World};
+use crate::{BodyId, BodyType, Capacity, ShapeDef, ShapeId, SurfaceMaterial, Vec3};
+#[cfg(feature = "bevy")]
+use std::collections::HashMap;
 
 /// Bevy minor version supported by this integration.
 ///
@@ -117,6 +119,7 @@ impl From<RigidBody> for BodyType {
 }
 
 /// Bevy collider component. One collider per entity for the first plugin pass.
+#[cfg_attr(not(feature = "bevy"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Component)]
 pub struct Collider {
     shape: ColliderShape,
@@ -204,12 +207,14 @@ pub struct Box3dShape {
 }
 
 /// Non-send Box3D world resource owned by the plugin.
+#[cfg(feature = "bevy")]
 pub struct Box3dWorld {
     world: World,
     bodies: HashMap<Entity, sys::b3BodyId>,
     last_step: std::time::Instant,
 }
 
+#[cfg(feature = "bevy")]
 impl Box3dWorld {
     pub fn new(config: Box3dConfig) -> Self {
         let world = World::with_capacity(config.gravity, config.capacity);
@@ -238,6 +243,7 @@ impl Box3dWorld {
     }
 }
 
+#[cfg(feature = "bevy")]
 impl Drop for Box3dWorld {
     fn drop(&mut self) {
         for (_, raw) in self.bodies.drain() {
