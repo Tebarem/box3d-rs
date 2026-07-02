@@ -1,6 +1,6 @@
 [package]
 name = "box3d-sys"
-version = "0.1.11"
+version = "0.1.12"
 edition = "2021"
 links = "box3d"
 description = "Raw Rust FFI bindings for Box3D."
