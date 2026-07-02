@@ -584,6 +584,7 @@ fn sync_static_transforms_to_box3d(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn step_box3d_world(
     fixed_time: bevy_ecs::prelude::Res<Time<Fixed>>,
     config: bevy_ecs::prelude::Res<Box3dConfig>,
