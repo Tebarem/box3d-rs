@@ -58,6 +58,10 @@ impl<'world> Body<'world> {
         }
     }
 
+    pub(crate) fn raw(&self) -> sys::b3BodyId {
+        self.raw
+    }
+
     pub fn position(&self) -> Vec3 {
         unsafe { sys::b3Body_GetPosition(self.raw) }.into()
     }
