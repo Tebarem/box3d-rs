@@ -4,8 +4,9 @@ use box3d_sys as sys;
 
 use crate::{
     body::Body,
+    collision::{compute_hull_aabb, compute_hull_mass},
     handle,
-    math::{Transform, Vec3},
+    math::{Aabb, MassData, Transform, Vec3},
     shape::{raw_shape_def, Shape, ShapeDef},
     Error, Result,
 };
@@ -15,6 +16,13 @@ pub struct BoxHull {
 }
 
 impl BoxHull {
+    pub fn cube(half_width: f32) -> Self {
+        assert!(half_width > 0.0);
+        Self {
+            raw: unsafe { sys::b3MakeCubeHull(half_width) },
+        }
+    }
+
     pub fn new(half_extents: Vec3) -> Self {
         assert!(half_extents.x > 0.0 && half_extents.y > 0.0 && half_extents.z > 0.0);
         Self {
@@ -49,6 +57,56 @@ impl BoxHull {
             },
         }
     }
+
+    pub fn scaled(half_extents: Vec3, transform: Transform, post_scale: Vec3) -> Self {
+        assert!(half_extents.x > 0.0 && half_extents.y > 0.0 && half_extents.z > 0.0);
+        assert_valid_transform(transform);
+        assert_valid_vec3(post_scale);
+        Self {
+            raw: unsafe {
+                sys::b3MakeScaledBoxHull(half_extents.into(), transform.into(), post_scale.into())
+            },
+        }
+    }
+
+    pub fn scale_box(
+        half_extents: Vec3,
+        transform: Transform,
+        post_scale: Vec3,
+        min_half_extent: f32,
+    ) -> (Vec3, Transform) {
+        assert!(half_extents.x > 0.0 && half_extents.y > 0.0 && half_extents.z > 0.0);
+        assert_valid_transform(transform);
+        assert_valid_vec3(post_scale);
+        assert!(min_half_extent > 0.0 && min_half_extent.is_finite());
+        let mut raw_half_extents = half_extents.into();
+        let mut raw_transform = transform.into();
+        unsafe {
+            sys::b3ScaleBox(
+                &mut raw_half_extents,
+                &mut raw_transform,
+                post_scale.into(),
+                min_half_extent,
+            )
+        };
+        (raw_half_extents.into(), raw_transform.into())
+    }
+
+    pub fn compute_aabb(&self, transform: Transform) -> Aabb {
+        compute_hull_aabb(self, transform)
+    }
+
+    pub fn compute_mass(&self, density: f32) -> MassData {
+        compute_hull_mass(self, density)
+    }
+
+    pub fn vertex_count(&self) -> i32 {
+        self.raw.base.vertexCount
+    }
+
+    pub fn face_count(&self) -> i32 {
+        self.raw.base.faceCount
+    }
 }
 
 pub struct Hull {
@@ -56,13 +114,68 @@ pub struct Hull {
 }
 
 impl Hull {
+    pub fn cylinder(height: f32, radius: f32, y_offset: f32, sides: i32) -> Result<Self> {
+        if height <= 0.0 || radius <= 0.0 || !y_offset.is_finite() || !(3..=32).contains(&sides) {
+            return Err(Error::InvalidInput);
+        }
+        Self::from_raw(unsafe { sys::b3CreateCylinder(height, radius, y_offset, sides) })
+    }
+
+    pub fn cone(height: f32, radius1: f32, radius2: f32, slices: i32) -> Result<Self> {
+        if height <= 0.0 || radius1 <= 0.0 || radius2 <= 0.0 || !(4..=32).contains(&slices) {
+            return Err(Error::InvalidInput);
+        }
+        Self::from_raw(unsafe { sys::b3CreateCone(height, radius1, radius2, slices) })
+    }
+
+    pub fn rock(radius: f32) -> Result<Self> {
+        if radius <= 0.0 {
+            return Err(Error::InvalidInput);
+        }
+        Self::from_raw(unsafe { sys::b3CreateRock(radius) })
+    }
+
     pub fn from_points(points: &[Vec3], max_vertices: i32) -> Result<Self> {
         let point_count = i32::try_from(points.len()).map_err(|_| Error::Null)?;
         let raw_points = points.iter().copied().map(Into::into).collect::<Vec<_>>();
         let raw = unsafe { sys::b3CreateHull(raw_points.as_ptr(), point_count, max_vertices) };
-        let raw = NonNull::new(raw).ok_or(Error::Null)?;
+        Self::from_raw(raw)
+    }
 
+    pub fn clone_transformed(&self, transform: Transform, scale: Vec3) -> Result<Self> {
+        assert_valid_transform(transform);
+        assert_valid_vec3(scale);
+        Self::from_raw(unsafe {
+            sys::b3CloneAndTransformHull(self.raw.as_ptr(), transform.into(), scale.into())
+        })
+    }
+
+    pub fn compute_aabb(&self, transform: Transform) -> Aabb {
+        compute_hull_aabb(self, transform)
+    }
+
+    pub fn compute_mass(&self, density: f32) -> MassData {
+        compute_hull_mass(self, density)
+    }
+
+    pub fn vertex_count(&self) -> i32 {
+        unsafe { self.raw.as_ref().vertexCount }
+    }
+
+    pub fn face_count(&self) -> i32 {
+        unsafe { self.raw.as_ref().faceCount }
+    }
+
+    fn from_raw(raw: *mut sys::b3HullData) -> Result<Self> {
+        let raw = NonNull::new(raw).ok_or(Error::Null)?;
         Ok(Self { raw })
+    }
+}
+
+impl Clone for Hull {
+    fn clone(&self) -> Self {
+        Self::from_raw(unsafe { sys::b3CloneHull(self.raw.as_ptr()) })
+            .expect("box3d returned a null hull")
     }
 }
 
@@ -202,5 +315,47 @@ mod tests {
 
         assert!(shape.is_valid());
         assert_eq!(shape.shape_type(), ShapeType::Hull);
+    }
+
+    #[test]
+    fn hull_generators_clone_and_box_helpers() {
+        let cube = BoxHull::cube(0.5);
+        assert_eq!(cube.vertex_count(), 8);
+        assert_eq!(cube.face_count(), 6);
+        assert!(cube.compute_mass(1.0).mass > 0.0);
+
+        let scaled = BoxHull::scaled(
+            Vec3::new(0.5, 0.5, 0.5),
+            Transform::IDENTITY,
+            Vec3::new(-2.0, 1.0, 1.0),
+        );
+        assert_eq!(scaled.face_count(), 6);
+
+        let (half_extents, transform) = BoxHull::scale_box(
+            Vec3::new(0.5, 0.25, 0.75),
+            Transform::IDENTITY,
+            Vec3::new(-2.0, 1.0, 1.0),
+            0.01,
+        );
+        assert!(half_extents.x >= 0.01);
+        assert!(transform.q.s.is_finite());
+
+        let cylinder = Hull::cylinder(1.0, 0.5, 0.0, 8).unwrap();
+        let cone = Hull::cone(1.0, 0.5, 0.25, 8).unwrap();
+        let rock = Hull::rock(0.5).unwrap();
+        let cloned = cylinder.clone();
+        let transformed = cloned
+            .clone_transformed(Transform::IDENTITY, Vec3::new(1.0, 1.0, 1.0))
+            .unwrap();
+
+        assert!(cylinder.vertex_count() >= 8);
+        assert!(cone.vertex_count() >= 8);
+        assert!(rock.vertex_count() > 0);
+        assert_eq!(transformed.face_count(), cloned.face_count());
+        assert!(transformed
+            .compute_aabb(Transform::IDENTITY)
+            .upper_bound
+            .y
+            .is_finite());
     }
 }

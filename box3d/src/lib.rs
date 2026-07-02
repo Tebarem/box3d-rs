@@ -31,10 +31,20 @@ pub use body::{Body, BodyDef, BodyType, MotionLocks};
 pub use callbacks::PreSolveContact;
 pub use character::{clip_vector, solve_planes, CollisionPlane, MoverCapsule};
 pub use collision::{
-    compute_aabb, compute_mass, shape_cast, shape_distance, BoxShape, Capsule, DistanceOutput,
-    ShapeCastOutput, SimpleShape, Sphere,
+    compute_aabb, compute_capsule_aabb, compute_capsule_mass, compute_compound_aabb,
+    compute_height_field_aabb, compute_hull_aabb, compute_hull_mass, compute_mass,
+    compute_mesh_aabb, compute_sphere_aabb, compute_sphere_mass, is_valid_ray, overlap_capsule,
+    overlap_compound, overlap_height_field, overlap_hull, overlap_mesh, overlap_sphere,
+    ray_cast_capsule, ray_cast_compound, ray_cast_height_field, ray_cast_hollow_sphere,
+    ray_cast_hull, ray_cast_mesh, ray_cast_sphere, shape_cast, shape_cast_capsule,
+    shape_cast_compound, shape_cast_height_field, shape_cast_hull, shape_cast_mesh,
+    shape_cast_sphere, shape_distance, BoxShape, Capsule, DistanceOutput, RayCastInput,
+    ShapeCastInput, ShapeCastOutput, SimpleShape, Sphere,
 };
-pub use compound::{Compound, CompoundPart};
+pub use compound::{
+    Compound, CompoundCapsule, CompoundChild, CompoundHull, CompoundMesh, CompoundPart,
+    CompoundSphere,
+};
 pub use contact::{ContactData, ContactManifold, ContactPoint};
 pub use debug_draw::{DebugDraw, DEFAULT_DEBUG_MASK};
 pub use dynamic_tree::{
@@ -55,7 +65,7 @@ pub use joint::{
     WheelJoint, WheelJointDef,
 };
 pub use math::{Aabb, Filter, MassData, Matrix3, Quat, SurfaceMaterial, Transform, Vec3};
-pub use mesh::{HeightField, Mesh};
+pub use mesh::{HeightField, Mesh, MeshCreateOptions, MeshQueryTriangle, MeshTriangle};
 pub use query::{
     BodyCastHit, BodyClosestPoint, BodyPlane, CastHit, MoverPlane, Plane, QueryFilter, QueryStats,
     RayHit, ShapeProxy, ShapeRef,

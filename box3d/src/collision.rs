@@ -1,7 +1,10 @@
 use box3d_sys as sys;
 
 use crate::{
+    compound::Compound,
+    hull::HullRef,
     math::{Aabb, MassData, Transform, Vec3},
+    mesh::{HeightField, Mesh},
     query::ShapeProxy,
 };
 
@@ -150,6 +153,84 @@ impl ShapeCastOutput {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RayCastInput {
+    pub origin: Vec3,
+    pub translation: Vec3,
+    pub max_fraction: f32,
+}
+
+impl RayCastInput {
+    pub fn new(origin: Vec3, translation: Vec3, max_fraction: f32) -> Self {
+        assert_valid_vec3(origin);
+        assert_valid_vec3(translation);
+        assert!((0.0..=1.0).contains(&max_fraction));
+        Self {
+            origin,
+            translation,
+            max_fraction,
+        }
+    }
+
+    fn raw(self) -> sys::b3RayCastInput {
+        Self::new(self.origin, self.translation, self.max_fraction);
+        sys::b3RayCastInput {
+            origin: self.origin.into(),
+            translation: self.translation.into(),
+            maxFraction: self.max_fraction,
+        }
+    }
+
+    fn raw_unchecked(self) -> sys::b3RayCastInput {
+        sys::b3RayCastInput {
+            origin: self.origin.into(),
+            translation: self.translation.into(),
+            maxFraction: self.max_fraction,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ShapeCastInput<'a> {
+    pub proxy: ShapeProxy<'a>,
+    pub translation: Vec3,
+    pub max_fraction: f32,
+    pub can_encroach: bool,
+}
+
+impl<'a> ShapeCastInput<'a> {
+    pub fn new(
+        proxy: ShapeProxy<'a>,
+        translation: Vec3,
+        max_fraction: f32,
+        can_encroach: bool,
+    ) -> Self {
+        assert_valid_vec3(translation);
+        assert!((0.0..=1.0).contains(&max_fraction));
+        Self {
+            proxy,
+            translation,
+            max_fraction,
+            can_encroach,
+        }
+    }
+
+    fn raw(self, points: &[sys::b3Vec3]) -> sys::b3ShapeCastInput {
+        Self::new(
+            self.proxy,
+            self.translation,
+            self.max_fraction,
+            self.can_encroach,
+        );
+        sys::b3ShapeCastInput {
+            proxy: self.proxy.raw(points),
+            translation: self.translation.into(),
+            maxFraction: self.max_fraction,
+            canEncroach: self.can_encroach,
+        }
+    }
+}
+
 impl From<sys::b3Sphere> for Sphere {
     fn from(value: sys::b3Sphere) -> Self {
         Self {
@@ -201,6 +282,11 @@ pub fn compute_mass(shape: impl Into<SimpleShape>, density: f32) -> MassData {
         SimpleShape::Capsule(shape) => compute_capsule_mass(shape, density),
         SimpleShape::Box(shape) => compute_box_mass(shape, density),
     }
+}
+
+pub fn is_valid_ray(input: RayCastInput) -> bool {
+    let raw = input.raw_unchecked();
+    unsafe { sys::b3IsValidRay(&raw) }
 }
 
 pub fn shape_distance(
@@ -280,10 +366,221 @@ pub fn compute_box_mass(shape: BoxShape, density: f32) -> MassData {
     unsafe { sys::b3ComputeHullMass(&raw.base, density) }.into()
 }
 
+pub fn compute_hull_aabb<'a>(hull: impl Into<HullRef<'a>>, transform: Transform) -> Aabb {
+    unsafe { sys::b3ComputeHullAABB(hull.into().raw(), transform.into()) }.into()
+}
+
+pub fn compute_hull_mass<'a>(hull: impl Into<HullRef<'a>>, density: f32) -> MassData {
+    unsafe { sys::b3ComputeHullMass(hull.into().raw(), density) }.into()
+}
+
+pub fn compute_mesh_aabb(mesh: &Mesh, transform: Transform, scale: Vec3) -> Aabb {
+    assert_mesh_scale(scale);
+    unsafe { sys::b3ComputeMeshAABB(mesh.raw(), transform.into(), scale.into()) }.into()
+}
+
+pub fn compute_height_field_aabb(height_field: &HeightField, transform: Transform) -> Aabb {
+    unsafe { sys::b3ComputeHeightFieldAABB(height_field.raw(), transform.into()) }.into()
+}
+
+pub fn compute_compound_aabb(compound: &Compound, transform: Transform) -> Aabb {
+    unsafe { sys::b3ComputeCompoundAABB(compound.raw(), transform.into()) }.into()
+}
+
+pub fn overlap_sphere(shape: Sphere, shape_transform: Transform, proxy: ShapeProxy<'_>) -> bool {
+    let raw_shape = shape.raw();
+    with_shape_proxy(proxy, |proxy| unsafe {
+        sys::b3OverlapSphere(&raw_shape, shape_transform.into(), proxy)
+    })
+}
+
+pub fn overlap_capsule(shape: Capsule, shape_transform: Transform, proxy: ShapeProxy<'_>) -> bool {
+    let raw_shape = shape.raw();
+    with_shape_proxy(proxy, |proxy| unsafe {
+        sys::b3OverlapCapsule(&raw_shape, shape_transform.into(), proxy)
+    })
+}
+
+pub fn overlap_hull<'a>(
+    hull: impl Into<HullRef<'a>>,
+    shape_transform: Transform,
+    proxy: ShapeProxy<'_>,
+) -> bool {
+    let raw_hull = hull.into().raw();
+    with_shape_proxy(proxy, |proxy| unsafe {
+        sys::b3OverlapHull(raw_hull, shape_transform.into(), proxy)
+    })
+}
+
+pub fn overlap_mesh(
+    mesh: &Mesh,
+    scale: Vec3,
+    shape_transform: Transform,
+    proxy: ShapeProxy<'_>,
+) -> bool {
+    let raw_mesh = raw_mesh(mesh, scale);
+    with_shape_proxy(proxy, |proxy| unsafe {
+        sys::b3OverlapMesh(&raw_mesh, shape_transform.into(), proxy)
+    })
+}
+
+pub fn overlap_height_field(
+    height_field: &HeightField,
+    shape_transform: Transform,
+    proxy: ShapeProxy<'_>,
+) -> bool {
+    with_shape_proxy(proxy, |proxy| unsafe {
+        sys::b3OverlapHeightField(height_field.raw(), shape_transform.into(), proxy)
+    })
+}
+
+pub fn overlap_compound(
+    compound: &Compound,
+    shape_transform: Transform,
+    proxy: ShapeProxy<'_>,
+) -> bool {
+    with_shape_proxy(proxy, |proxy| unsafe {
+        sys::b3OverlapCompound(compound.raw(), shape_transform.into(), proxy)
+    })
+}
+
+pub fn ray_cast_sphere(shape: Sphere, input: RayCastInput) -> Option<ShapeCastOutput> {
+    let raw_shape = shape.raw();
+    let input = input.raw();
+    ShapeCastOutput::from_raw(unsafe { sys::b3RayCastSphere(&raw_shape, &input) })
+}
+
+pub fn ray_cast_hollow_sphere(shape: Sphere, input: RayCastInput) -> Option<ShapeCastOutput> {
+    let raw_shape = shape.raw();
+    let input = input.raw();
+    ShapeCastOutput::from_raw(unsafe { sys::b3RayCastHollowSphere(&raw_shape, &input) })
+}
+
+pub fn ray_cast_capsule(shape: Capsule, input: RayCastInput) -> Option<ShapeCastOutput> {
+    let raw_shape = shape.raw();
+    let input = input.raw();
+    ShapeCastOutput::from_raw(unsafe { sys::b3RayCastCapsule(&raw_shape, &input) })
+}
+
+pub fn ray_cast_hull<'a>(
+    hull: impl Into<HullRef<'a>>,
+    input: RayCastInput,
+) -> Option<ShapeCastOutput> {
+    let input = input.raw();
+    ShapeCastOutput::from_raw(unsafe { sys::b3RayCastHull(hull.into().raw(), &input) })
+}
+
+pub fn ray_cast_mesh(mesh: &Mesh, scale: Vec3, input: RayCastInput) -> Option<ShapeCastOutput> {
+    let raw_mesh = raw_mesh(mesh, scale);
+    let input = input.raw();
+    ShapeCastOutput::from_raw(unsafe { sys::b3RayCastMesh(&raw_mesh, &input) })
+}
+
+pub fn ray_cast_height_field(
+    height_field: &HeightField,
+    input: RayCastInput,
+) -> Option<ShapeCastOutput> {
+    let input = input.raw();
+    ShapeCastOutput::from_raw(unsafe { sys::b3RayCastHeightField(height_field.raw(), &input) })
+}
+
+pub fn ray_cast_compound(compound: &Compound, input: RayCastInput) -> Option<ShapeCastOutput> {
+    let input = input.raw();
+    ShapeCastOutput::from_raw(unsafe { sys::b3RayCastCompound(compound.raw(), &input) })
+}
+
+pub fn shape_cast_sphere(shape: Sphere, input: ShapeCastInput<'_>) -> Option<ShapeCastOutput> {
+    let raw_shape = shape.raw();
+    with_shape_cast_input(input, |input| unsafe {
+        sys::b3ShapeCastSphere(&raw_shape, input)
+    })
+}
+
+pub fn shape_cast_capsule(shape: Capsule, input: ShapeCastInput<'_>) -> Option<ShapeCastOutput> {
+    let raw_shape = shape.raw();
+    with_shape_cast_input(input, |input| unsafe {
+        sys::b3ShapeCastCapsule(&raw_shape, input)
+    })
+}
+
+pub fn shape_cast_hull<'a>(
+    hull: impl Into<HullRef<'a>>,
+    input: ShapeCastInput<'_>,
+) -> Option<ShapeCastOutput> {
+    let raw_hull = hull.into().raw();
+    with_shape_cast_input(input, |input| unsafe {
+        sys::b3ShapeCastHull(raw_hull, input)
+    })
+}
+
+pub fn shape_cast_mesh(
+    mesh: &Mesh,
+    scale: Vec3,
+    input: ShapeCastInput<'_>,
+) -> Option<ShapeCastOutput> {
+    let raw_mesh = raw_mesh(mesh, scale);
+    with_shape_cast_input(input, |input| unsafe {
+        sys::b3ShapeCastMesh(&raw_mesh, input)
+    })
+}
+
+pub fn shape_cast_height_field(
+    height_field: &HeightField,
+    input: ShapeCastInput<'_>,
+) -> Option<ShapeCastOutput> {
+    with_shape_cast_input(input, |input| unsafe {
+        sys::b3ShapeCastHeightField(height_field.raw(), input)
+    })
+}
+
+pub fn shape_cast_compound(
+    compound: &Compound,
+    input: ShapeCastInput<'_>,
+) -> Option<ShapeCastOutput> {
+    with_shape_cast_input(input, |input| unsafe {
+        sys::b3ShapeCastCompound(compound.raw(), input)
+    })
+}
+
+fn with_shape_proxy<T>(proxy: ShapeProxy<'_>, f: impl FnOnce(&sys::b3ShapeProxy) -> T) -> T {
+    let points = proxy.raw_points();
+    let proxy = proxy.raw(&points);
+    f(&proxy)
+}
+
+fn with_shape_cast_input(
+    input: ShapeCastInput<'_>,
+    f: impl FnOnce(&sys::b3ShapeCastInput) -> sys::b3CastOutput,
+) -> Option<ShapeCastOutput> {
+    let points = input.proxy.raw_points();
+    let input = input.raw(&points);
+    ShapeCastOutput::from_raw(f(&input))
+}
+
+fn raw_mesh(mesh: &Mesh, scale: Vec3) -> sys::b3Mesh {
+    assert_mesh_scale(scale);
+    sys::b3Mesh {
+        data: mesh.raw(),
+        scale: scale.into(),
+    }
+}
+
+fn assert_mesh_scale(scale: Vec3) {
+    assert_valid_vec3(scale);
+    assert!(scale.x != 0.0 && scale.y != 0.0 && scale.z != 0.0);
+}
+
+fn assert_valid_vec3(value: Vec3) {
+    assert!(value.x.is_finite() && value.y.is_finite() && value.z.is_finite());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::math::{Quat, Transform};
+    use crate::{
+        hull::BoxHull,
+        math::{Quat, Transform},
+    };
 
     fn assert_close(actual: f32, expected: f32) {
         assert!((actual - expected).abs() < 1.0e-5, "{actual} != {expected}");
@@ -354,5 +651,60 @@ mod tests {
         )
         .expect("moving sphere should hit fixed sphere");
         assert!(cast.fraction > 0.0 && cast.fraction < 1.0, "{cast:?}");
+    }
+
+    #[test]
+    fn standalone_sphere_capsule_and_hull_queries() {
+        let point = [Vec3::ZERO];
+        let proxy = ShapeProxy::new(&point, 0.25).unwrap();
+
+        let sphere = Sphere::new(Vec3::ZERO, 1.0);
+        assert!(is_valid_ray(RayCastInput::new(
+            Vec3::new(-2.0, 0.0, 0.0),
+            Vec3::new(4.0, 0.0, 0.0),
+            1.0,
+        )));
+        assert!(overlap_sphere(sphere, Transform::IDENTITY, proxy));
+        assert!(ray_cast_sphere(
+            sphere,
+            RayCastInput::new(Vec3::new(-2.0, 0.0, 0.0), Vec3::new(4.0, 0.0, 0.0), 1.0),
+        )
+        .is_some());
+        assert!(ray_cast_hollow_sphere(
+            sphere,
+            RayCastInput::new(Vec3::new(-2.0, 0.0, 0.0), Vec3::new(4.0, 0.0, 0.0), 1.0),
+        )
+        .is_some());
+        assert!(shape_cast_sphere(
+            Sphere::new(Vec3::new(2.0, 0.0, 0.0), 0.5),
+            ShapeCastInput::new(proxy, Vec3::new(3.0, 0.0, 0.0), 1.0, false),
+        )
+        .is_some());
+
+        let capsule = Capsule::new(Vec3::new(-0.5, 0.0, 0.0), Vec3::new(0.5, 0.0, 0.0), 0.5);
+        assert!(overlap_capsule(capsule, Transform::IDENTITY, proxy));
+        assert!(ray_cast_capsule(
+            capsule,
+            RayCastInput::new(Vec3::new(-2.0, 0.0, 0.0), Vec3::new(4.0, 0.0, 0.0), 1.0),
+        )
+        .is_some());
+        assert!(shape_cast_capsule(
+            Capsule::new(Vec3::new(2.0, -0.5, 0.0), Vec3::new(2.0, 0.5, 0.0), 0.5),
+            ShapeCastInput::new(proxy, Vec3::new(3.0, 0.0, 0.0), 1.0, false),
+        )
+        .is_some());
+
+        let hull = BoxHull::cube(1.0);
+        assert!(overlap_hull(&hull, Transform::IDENTITY, proxy));
+        assert!(ray_cast_hull(
+            &hull,
+            RayCastInput::new(Vec3::new(-3.0, 0.0, 0.0), Vec3::new(6.0, 0.0, 0.0), 1.0),
+        )
+        .is_some());
+        assert!(shape_cast_hull(
+            &hull,
+            ShapeCastInput::new(proxy, Vec3::new(3.0, 0.0, 0.0), 1.0, false),
+        )
+        .is_some());
     }
 }
