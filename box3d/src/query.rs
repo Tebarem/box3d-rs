@@ -335,6 +335,64 @@ impl World {
         stats.into()
     }
 
+    pub fn overlap_shape<F>(
+        &self,
+        origin: Vec3,
+        proxy: ShapeProxy<'_>,
+        filter: QueryFilter,
+        mut f: F,
+    ) -> QueryStats
+    where
+        F: for<'shape> FnMut(ShapeRef<'shape>) -> bool,
+    {
+        let raw_points = proxy.raw_points();
+        let raw_proxy = proxy.raw(&raw_points);
+        let mut context = ShapeCallbackContext {
+            f: &mut f,
+            panic: None,
+        };
+        let stats = unsafe {
+            sys::b3World_OverlapShape(
+                self.raw(),
+                origin.into(),
+                &raw_proxy,
+                filter.into(),
+                Some(shape_callback::<F>),
+                (&mut context as *mut ShapeCallbackContext<'_, F>).cast(),
+            )
+        };
+        resume_callback_panic(context.panic.take());
+        stats.into()
+    }
+
+    pub fn cast_ray<F>(
+        &self,
+        origin: Vec3,
+        translation: Vec3,
+        filter: QueryFilter,
+        mut f: F,
+    ) -> QueryStats
+    where
+        F: for<'shape> FnMut(CastHit<'shape>) -> f32,
+    {
+        let mut context = CastCallbackContext {
+            f: &mut f,
+            panic: None,
+        };
+        let stats = unsafe {
+            sys::b3World_CastRay(
+                self.raw(),
+                origin.into(),
+                translation.into(),
+                filter.into(),
+                Some(cast_callback::<F>),
+                (&mut context as *mut CastCallbackContext<'_, F>).cast(),
+            )
+        };
+        resume_callback_panic(context.panic.take());
+        stats.into()
+    }
+
     pub fn cast_ray_closest(
         &self,
         origin: Vec3,
@@ -527,6 +585,52 @@ mod tests {
         );
 
         assert_eq!(count, 1);
+        assert!(stats.leaf_visits >= 1, "{stats:?}");
+    }
+
+    #[test]
+    fn overlap_shape_reports_shapes_in_proxy() {
+        let world = World::new(Vec3::ZERO);
+        let body = world.create_body(BodyDef::static_at(Vec3::ZERO));
+        let _shape = body.create_box(Vec3::new(0.5, 0.5, 0.5), ShapeDef::default());
+        let other = world.create_body(BodyDef::static_at(Vec3::new(5.0, 0.0, 0.0)));
+        let _other_shape = other.create_box(Vec3::new(0.5, 0.5, 0.5), ShapeDef::default());
+        let points = [Vec3::ZERO];
+        let proxy = ShapeProxy::new(&points, 1.0).unwrap();
+
+        let mut count = 0;
+        let stats = world.overlap_shape(Vec3::ZERO, proxy, QueryFilter::default(), |shape| {
+            assert!(shape.is_valid());
+            count += 1;
+            true
+        });
+
+        assert_eq!(count, 1);
+        assert!(stats.leaf_visits >= 1, "{stats:?}");
+    }
+
+    #[test]
+    fn streaming_ray_cast_reports_and_clips_hits() {
+        let world = World::new(Vec3::ZERO);
+        let near = world.create_body(BodyDef::static_at(Vec3::new(0.0, 0.0, 0.0)));
+        let _near_shape = near.create_box(Vec3::new(0.5, 0.5, 0.5), ShapeDef::default());
+        let far = world.create_body(BodyDef::static_at(Vec3::new(3.0, 0.0, 0.0)));
+        let _far_shape = far.create_box(Vec3::new(0.5, 0.5, 0.5), ShapeDef::default());
+
+        let mut fractions = Vec::new();
+        let stats = world.cast_ray(
+            Vec3::new(-3.0, 0.0, 0.0),
+            Vec3::new(8.0, 0.0, 0.0),
+            QueryFilter::default(),
+            |hit| {
+                assert!(hit.shape.is_valid());
+                assert!(hit.fraction > 0.0 && hit.fraction < 1.0, "{hit:?}");
+                fractions.push(hit.fraction);
+                hit.fraction
+            },
+        );
+
+        assert!(!fractions.is_empty());
         assert!(stats.leaf_visits >= 1, "{stats:?}");
     }
 
