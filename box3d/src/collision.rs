@@ -3,10 +3,12 @@ use box3d_sys as sys;
 use crate::{
     compound::Compound,
     hull::HullRef,
-    math::{Aabb, MassData, Transform, Vec3},
+    math::{Aabb, MassData, Quat, Transform, Vec3},
     mesh::{HeightField, Mesh},
     query::ShapeProxy,
 };
+
+const LOCAL_MANIFOLD_CAPACITY: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sphere {
@@ -150,6 +152,254 @@ impl ShapeCastOutput {
             child_index: value.childIndex,
             material_index: value.materialIndex,
         })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FeaturePair {
+    pub owner1: u8,
+    pub index1: u8,
+    pub owner2: u8,
+    pub index2: u8,
+}
+
+impl From<sys::b3FeaturePair> for FeaturePair {
+    fn from(value: sys::b3FeaturePair) -> Self {
+        Self {
+            owner1: value.owner1,
+            index1: value.index1,
+            owner2: value.owner2,
+            index2: value.index2,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LocalManifoldPoint {
+    pub point: Vec3,
+    pub separation: f32,
+    pub pair: FeaturePair,
+    pub triangle_index: i32,
+}
+
+impl From<sys::b3LocalManifoldPoint> for LocalManifoldPoint {
+    fn from(value: sys::b3LocalManifoldPoint) -> Self {
+        Self {
+            point: value.point.into(),
+            separation: value.separation,
+            pair: value.pair.into(),
+            triangle_index: value.triangleIndex,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LocalManifold {
+    pub normal: Vec3,
+    pub triangle_normal: Vec3,
+    pub points: Vec<LocalManifoldPoint>,
+    pub triangle_index: i32,
+    pub indices: [i32; 3],
+    pub squared_distance: f32,
+    pub feature: TriangleFeature,
+    pub triangle_flags: MeshEdgeFlags,
+}
+
+impl LocalManifold {
+    pub fn points(&self) -> &[LocalManifoldPoint] {
+        &self.points
+    }
+
+    fn from_raw(raw: sys::b3LocalManifold, points: &[sys::b3LocalManifoldPoint]) -> Self {
+        assert!(raw.pointCount <= points.len() as i32);
+        let count = raw.pointCount.max(0) as usize;
+        Self {
+            normal: raw.normal.into(),
+            triangle_normal: raw.triangleNormal.into(),
+            points: points[..count].iter().copied().map(Into::into).collect(),
+            triangle_index: raw.triangleIndex,
+            indices: [raw.i1, raw.i2, raw.i3],
+            squared_distance: raw.squaredDistance,
+            feature: raw.feature.into(),
+            triangle_flags: MeshEdgeFlags(raw.triangleFlags),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TriangleFeature {
+    None,
+    TriangleFace,
+    HullFace,
+    Edge1,
+    Edge2,
+    Edge3,
+    Vertex1,
+    Vertex2,
+    Vertex3,
+}
+
+impl From<sys::b3TriangleFeature> for TriangleFeature {
+    fn from(value: sys::b3TriangleFeature) -> Self {
+        match value {
+            sys::b3TriangleFeature_b3_featureNone => Self::None,
+            sys::b3TriangleFeature_b3_featureTriangleFace => Self::TriangleFace,
+            sys::b3TriangleFeature_b3_featureHullFace => Self::HullFace,
+            sys::b3TriangleFeature_b3_featureEdge1 => Self::Edge1,
+            sys::b3TriangleFeature_b3_featureEdge2 => Self::Edge2,
+            sys::b3TriangleFeature_b3_featureEdge3 => Self::Edge3,
+            sys::b3TriangleFeature_b3_featureVertex1 => Self::Vertex1,
+            sys::b3TriangleFeature_b3_featureVertex2 => Self::Vertex2,
+            sys::b3TriangleFeature_b3_featureVertex3 => Self::Vertex3,
+            _ => panic!("unknown box3d triangle feature {value}"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MeshEdgeFlags(pub i32);
+
+impl MeshEdgeFlags {
+    pub const CONCAVE_EDGE1: Self = Self(sys::b3MeshEdgeFlags_b3_concaveEdge1);
+    pub const CONCAVE_EDGE2: Self = Self(sys::b3MeshEdgeFlags_b3_concaveEdge2);
+    pub const CONCAVE_EDGE3: Self = Self(sys::b3MeshEdgeFlags_b3_concaveEdge3);
+    pub const INVERSE_CONCAVE_EDGE1: Self = Self(sys::b3MeshEdgeFlags_b3_inverseConcaveEdge1);
+    pub const INVERSE_CONCAVE_EDGE2: Self = Self(sys::b3MeshEdgeFlags_b3_inverseConcaveEdge2);
+    pub const INVERSE_CONCAVE_EDGE3: Self = Self(sys::b3MeshEdgeFlags_b3_inverseConcaveEdge3);
+    pub const ALL_CONCAVE_EDGES: Self = Self(sys::b3MeshEdgeFlags_b3_allConcaveEdges);
+    pub const FLAT_EDGE1: Self = Self(sys::b3MeshEdgeFlags_b3_flatEdge1);
+    pub const FLAT_EDGE2: Self = Self(sys::b3MeshEdgeFlags_b3_flatEdge2);
+    pub const FLAT_EDGE3: Self = Self(sys::b3MeshEdgeFlags_b3_flatEdge3);
+    pub const ALL_FLAT_EDGES: Self = Self(sys::b3MeshEdgeFlags_b3_allFlatEdges);
+
+    pub const fn bits(self) -> i32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sweep {
+    pub local_center: Vec3,
+    pub center1: Vec3,
+    pub center2: Vec3,
+    pub rotation1: Quat,
+    pub rotation2: Quat,
+}
+
+impl Sweep {
+    pub fn new(
+        local_center: Vec3,
+        center1: Vec3,
+        center2: Vec3,
+        rotation1: Quat,
+        rotation2: Quat,
+    ) -> Self {
+        assert_valid_vec3(local_center);
+        assert_valid_vec3(center1);
+        assert_valid_vec3(center2);
+        Self {
+            local_center,
+            center1,
+            center2,
+            rotation1,
+            rotation2,
+        }
+    }
+
+    fn raw(self) -> sys::b3Sweep {
+        Self::new(
+            self.local_center,
+            self.center1,
+            self.center2,
+            self.rotation1,
+            self.rotation2,
+        );
+        sys::b3Sweep {
+            localCenter: self.local_center.into(),
+            c1: self.center1.into(),
+            c2: self.center2.into(),
+            q1: self.rotation1.into(),
+            q2: self.rotation2.into(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TimeOfImpactInput<'a> {
+    pub proxy_a: ShapeProxy<'a>,
+    pub proxy_b: ShapeProxy<'a>,
+    pub sweep_a: Sweep,
+    pub sweep_b: Sweep,
+    pub max_fraction: f32,
+}
+
+impl<'a> TimeOfImpactInput<'a> {
+    pub fn new(
+        proxy_a: ShapeProxy<'a>,
+        proxy_b: ShapeProxy<'a>,
+        sweep_a: Sweep,
+        sweep_b: Sweep,
+        max_fraction: f32,
+    ) -> Self {
+        assert!((0.0..=1.0).contains(&max_fraction));
+        Self {
+            proxy_a,
+            proxy_b,
+            sweep_a,
+            sweep_b,
+            max_fraction,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TimeOfImpactState {
+    Unknown,
+    Failed,
+    Overlapped,
+    Hit,
+    Separated,
+}
+
+impl From<sys::b3TOIState> for TimeOfImpactState {
+    fn from(value: sys::b3TOIState) -> Self {
+        match value {
+            sys::b3TOIState_b3_toiStateUnknown => Self::Unknown,
+            sys::b3TOIState_b3_toiStateFailed => Self::Failed,
+            sys::b3TOIState_b3_toiStateOverlapped => Self::Overlapped,
+            sys::b3TOIState_b3_toiStateHit => Self::Hit,
+            sys::b3TOIState_b3_toiStateSeparated => Self::Separated,
+            _ => panic!("unknown box3d TOI state {value}"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimeOfImpactOutput {
+    pub state: TimeOfImpactState,
+    pub point: Vec3,
+    pub normal: Vec3,
+    pub fraction: f32,
+    pub distance: f32,
+    pub distance_iterations: i32,
+    pub push_back_iterations: i32,
+    pub root_iterations: i32,
+    pub used_fallback: bool,
+}
+
+impl From<sys::b3TOIOutput> for TimeOfImpactOutput {
+    fn from(value: sys::b3TOIOutput) -> Self {
+        Self {
+            state: value.state.into(),
+            point: value.point.into(),
+            normal: value.normal.into(),
+            fraction: value.fraction,
+            distance: value.distance,
+            distance_iterations: value.distanceIterations,
+            push_back_iterations: value.pushBackIterations,
+            root_iterations: value.rootIterations,
+            used_fallback: value.usedFallback,
+        }
     }
 }
 
@@ -542,6 +792,184 @@ pub fn shape_cast_compound(
     })
 }
 
+pub fn get_sweep_transform(sweep: Sweep, time: f32) -> Transform {
+    assert!(time.is_finite());
+    let sweep = sweep.raw();
+    unsafe { sys::b3GetSweepTransform(&sweep, time) }.into()
+}
+
+pub fn time_of_impact(input: TimeOfImpactInput<'_>) -> TimeOfImpactOutput {
+    let points_a = input.proxy_a.raw_points();
+    let points_b = input.proxy_b.raw_points();
+    let input = sys::b3TOIInput {
+        proxyA: input.proxy_a.raw(&points_a),
+        proxyB: input.proxy_b.raw(&points_b),
+        sweepA: input.sweep_a.raw(),
+        sweepB: input.sweep_b.raw(),
+        maxFraction: input.max_fraction,
+    };
+    unsafe { sys::b3TimeOfImpact(&input) }.into()
+}
+
+pub fn collide_spheres(
+    sphere_a: Sphere,
+    sphere_b: Sphere,
+    transform_b_to_a: Transform,
+) -> LocalManifold {
+    let sphere_a = sphere_a.raw();
+    let sphere_b = sphere_b.raw();
+    with_local_manifold(|manifold, capacity| unsafe {
+        sys::b3CollideSpheres(
+            manifold,
+            capacity,
+            &sphere_a,
+            &sphere_b,
+            transform_b_to_a.into(),
+        )
+    })
+}
+
+pub fn collide_capsule_and_sphere(
+    capsule_a: Capsule,
+    sphere_b: Sphere,
+    transform_b_to_a: Transform,
+) -> LocalManifold {
+    let capsule_a = capsule_a.raw();
+    let sphere_b = sphere_b.raw();
+    with_local_manifold(|manifold, capacity| unsafe {
+        sys::b3CollideCapsuleAndSphere(
+            manifold,
+            capacity,
+            &capsule_a,
+            &sphere_b,
+            transform_b_to_a.into(),
+        )
+    })
+}
+
+pub fn collide_hull_and_sphere<'a>(
+    hull_a: impl Into<HullRef<'a>>,
+    sphere_b: Sphere,
+    transform_b_to_a: Transform,
+) -> LocalManifold {
+    let hull_a = hull_a.into().raw();
+    let sphere_b = sphere_b.raw();
+    let mut cache = sys::b3SimplexCache::default();
+    with_local_manifold(|manifold, capacity| unsafe {
+        sys::b3CollideHullAndSphere(
+            manifold,
+            capacity,
+            hull_a,
+            &sphere_b,
+            transform_b_to_a.into(),
+            &mut cache,
+        )
+    })
+}
+
+pub fn collide_capsules(
+    capsule_a: Capsule,
+    capsule_b: Capsule,
+    transform_b_to_a: Transform,
+) -> LocalManifold {
+    let capsule_a = capsule_a.raw();
+    let capsule_b = capsule_b.raw();
+    with_local_manifold(|manifold, capacity| unsafe {
+        sys::b3CollideCapsules(
+            manifold,
+            capacity,
+            &capsule_a,
+            &capsule_b,
+            transform_b_to_a.into(),
+        )
+    })
+}
+
+pub fn collide_hull_and_capsule<'a>(
+    hull_a: impl Into<HullRef<'a>>,
+    capsule_b: Capsule,
+    transform_b_to_a: Transform,
+) -> LocalManifold {
+    let hull_a = hull_a.into().raw();
+    let capsule_b = capsule_b.raw();
+    let mut cache = sys::b3SimplexCache::default();
+    with_local_manifold(|manifold, capacity| unsafe {
+        sys::b3CollideHullAndCapsule(
+            manifold,
+            capacity,
+            hull_a,
+            &capsule_b,
+            transform_b_to_a.into(),
+            &mut cache,
+        )
+    })
+}
+
+pub fn collide_hulls<'a, 'b>(
+    hull_a: impl Into<HullRef<'a>>,
+    hull_b: impl Into<HullRef<'b>>,
+    transform_b_to_a: Transform,
+) -> LocalManifold {
+    let hull_a = hull_a.into().raw();
+    let hull_b = hull_b.into().raw();
+    let mut cache = sys::b3SATCache::default();
+    with_local_manifold(|manifold, capacity| unsafe {
+        sys::b3CollideHulls(
+            manifold,
+            capacity,
+            hull_a,
+            hull_b,
+            transform_b_to_a.into(),
+            &mut cache,
+        )
+    })
+}
+
+pub fn collide_capsule_and_triangle(capsule_a: Capsule, triangle_b: [Vec3; 3]) -> LocalManifold {
+    let capsule_a = capsule_a.raw();
+    let triangle_b = raw_triangle(triangle_b);
+    let mut cache = sys::b3SimplexCache::default();
+    with_local_manifold(|manifold, capacity| unsafe {
+        sys::b3CollideCapsuleAndTriangle(
+            manifold,
+            capacity,
+            &capsule_a,
+            triangle_b.as_ptr(),
+            &mut cache,
+        )
+    })
+}
+
+pub fn collide_hull_and_triangle<'a>(
+    hull_a: impl Into<HullRef<'a>>,
+    triangle_b: [Vec3; 3],
+    triangle_flags: MeshEdgeFlags,
+) -> LocalManifold {
+    let hull_a = hull_a.into().raw();
+    let triangle_b = raw_triangle(triangle_b);
+    let mut cache = sys::b3SATCache::default();
+    with_local_manifold(|manifold, capacity| unsafe {
+        sys::b3CollideHullAndTriangle(
+            manifold,
+            capacity,
+            hull_a,
+            triangle_b[0],
+            triangle_b[1],
+            triangle_b[2],
+            triangle_flags.bits(),
+            &mut cache,
+        )
+    })
+}
+
+pub fn collide_sphere_and_triangle(sphere_a: Sphere, triangle_b: [Vec3; 3]) -> LocalManifold {
+    let sphere_a = sphere_a.raw();
+    let triangle_b = raw_triangle(triangle_b);
+    with_local_manifold(|manifold, capacity| unsafe {
+        sys::b3CollideSphereAndTriangle(manifold, capacity, &sphere_a, triangle_b.as_ptr())
+    })
+}
+
 fn with_shape_proxy<T>(proxy: ShapeProxy<'_>, f: impl FnOnce(&sys::b3ShapeProxy) -> T) -> T {
     let points = proxy.raw_points();
     let proxy = proxy.raw(&points);
@@ -572,6 +1000,21 @@ fn assert_mesh_scale(scale: Vec3) {
 
 fn assert_valid_vec3(value: Vec3) {
     assert!(value.x.is_finite() && value.y.is_finite() && value.z.is_finite());
+}
+
+fn with_local_manifold(f: impl FnOnce(*mut sys::b3LocalManifold, i32)) -> LocalManifold {
+    let mut points = [sys::b3LocalManifoldPoint::default(); LOCAL_MANIFOLD_CAPACITY];
+    let mut manifold = sys::b3LocalManifold {
+        points: points.as_mut_ptr(),
+        ..sys::b3LocalManifold::default()
+    };
+
+    f(&mut manifold, LOCAL_MANIFOLD_CAPACITY as i32);
+    LocalManifold::from_raw(manifold, &points)
+}
+
+fn raw_triangle(triangle: [Vec3; 3]) -> [sys::b3Vec3; 3] {
+    [triangle[0].into(), triangle[1].into(), triangle[2].into()]
 }
 
 #[cfg(test)]
@@ -706,5 +1149,113 @@ mod tests {
             ShapeCastInput::new(proxy, Vec3::new(3.0, 0.0, 0.0), 1.0, false),
         )
         .is_some());
+    }
+
+    #[test]
+    fn local_collision_wrappers_return_copied_manifolds() {
+        fn assert_manifold(manifold: &LocalManifold) {
+            assert!(!manifold.points().is_empty(), "{manifold:?}");
+            assert!(manifold.normal.x.is_finite());
+            assert!(manifold.normal.y.is_finite());
+            assert!(manifold.normal.z.is_finite());
+            for point in manifold.points() {
+                assert!(point.point.x.is_finite());
+                assert!(point.point.y.is_finite());
+                assert!(point.point.z.is_finite());
+                assert!(point.separation.is_finite());
+            }
+        }
+
+        let sphere_a = Sphere::new(Vec3::ZERO, 0.75);
+        let sphere_b = Sphere::new(Vec3::ZERO, 0.75);
+        assert_manifold(&collide_spheres(
+            sphere_a,
+            sphere_b,
+            Transform::new(Vec3::new(1.0, 0.0, 0.0), Quat::IDENTITY),
+        ));
+
+        let capsule = Capsule::new(Vec3::new(-0.5, 0.0, 0.0), Vec3::new(0.5, 0.0, 0.0), 0.5);
+        assert_manifold(&collide_capsule_and_sphere(
+            capsule,
+            Sphere::new(Vec3::new(0.0, 0.7, 0.0), 0.5),
+            Transform::IDENTITY,
+        ));
+        assert_manifold(&collide_capsules(
+            capsule,
+            capsule,
+            Transform::new(Vec3::new(0.0, 0.7, 0.0), Quat::IDENTITY),
+        ));
+
+        let hull = BoxHull::cube(1.0);
+        assert_manifold(&collide_hull_and_sphere(
+            &hull,
+            Sphere::new(Vec3::new(0.8, 0.0, 0.0), 0.5),
+            Transform::IDENTITY,
+        ));
+        assert_manifold(&collide_hull_and_capsule(
+            &hull,
+            capsule,
+            Transform::new(Vec3::new(0.8, 0.0, 0.0), Quat::IDENTITY),
+        ));
+        assert_manifold(&collide_hulls(
+            &hull,
+            &hull,
+            Transform::new(Vec3::new(0.5, 0.0, 0.0), Quat::IDENTITY),
+        ));
+
+        let triangle = [
+            Vec3::new(-2.0, -1.0, 0.0),
+            Vec3::new(2.0, -1.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+        ];
+        let triangle_capsule =
+            Capsule::new(Vec3::new(0.0, 0.0, -0.5), Vec3::new(0.0, 0.0, 0.5), 0.25);
+        assert_manifold(&collide_capsule_and_triangle(triangle_capsule, triangle));
+        assert_manifold(&collide_hull_and_triangle(
+            &hull,
+            triangle,
+            MeshEdgeFlags::default(),
+        ));
+        assert_manifold(&collide_sphere_and_triangle(
+            Sphere::new(Vec3::ZERO, 0.5),
+            triangle,
+        ));
+    }
+
+    #[test]
+    fn sweep_transform_and_time_of_impact_match_native_fixture() {
+        let square = [
+            Vec3::new(-1.0, -1.0, 0.0),
+            Vec3::new(1.0, -1.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(-1.0, 1.0, 0.0),
+        ];
+        let segment = [Vec3::new(2.0, -1.0, 0.0), Vec3::new(2.0, 1.0, 0.0)];
+        let proxy_a = ShapeProxy::new(&square, 0.0).unwrap();
+        let proxy_b = ShapeProxy::new(&segment, 0.0).unwrap();
+        let sweep_a = Sweep::new(
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Quat::IDENTITY,
+            Quat::IDENTITY,
+        );
+        let sweep_b = Sweep::new(
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::new(-2.0, 0.0, 0.0),
+            Quat::IDENTITY,
+            Quat::IDENTITY,
+        );
+
+        let halfway = get_sweep_transform(sweep_b, 0.5);
+        assert!((halfway.p.x + 1.0).abs() < 1.0e-5, "{halfway:?}");
+
+        let output = time_of_impact(TimeOfImpactInput::new(
+            proxy_a, proxy_b, sweep_a, sweep_b, 1.0,
+        ));
+
+        assert_eq!(output.state, TimeOfImpactState::Hit);
+        assert!((output.fraction - 0.5).abs() < 0.005, "{output:?}");
     }
 }

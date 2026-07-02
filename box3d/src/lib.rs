@@ -31,15 +31,19 @@ pub use body::{Body, BodyDef, BodyType, MotionLocks};
 pub use callbacks::PreSolveContact;
 pub use character::{clip_vector, solve_planes, CollisionPlane, MoverCapsule};
 pub use collision::{
-    compute_aabb, compute_capsule_aabb, compute_capsule_mass, compute_compound_aabb,
-    compute_height_field_aabb, compute_hull_aabb, compute_hull_mass, compute_mass,
-    compute_mesh_aabb, compute_sphere_aabb, compute_sphere_mass, is_valid_ray, overlap_capsule,
-    overlap_compound, overlap_height_field, overlap_hull, overlap_mesh, overlap_sphere,
-    ray_cast_capsule, ray_cast_compound, ray_cast_height_field, ray_cast_hollow_sphere,
-    ray_cast_hull, ray_cast_mesh, ray_cast_sphere, shape_cast, shape_cast_capsule,
-    shape_cast_compound, shape_cast_height_field, shape_cast_hull, shape_cast_mesh,
-    shape_cast_sphere, shape_distance, BoxShape, Capsule, DistanceOutput, RayCastInput,
-    ShapeCastInput, ShapeCastOutput, SimpleShape, Sphere,
+    collide_capsule_and_sphere, collide_capsule_and_triangle, collide_capsules,
+    collide_hull_and_capsule, collide_hull_and_sphere, collide_hull_and_triangle, collide_hulls,
+    collide_sphere_and_triangle, collide_spheres, compute_aabb, compute_capsule_aabb,
+    compute_capsule_mass, compute_compound_aabb, compute_height_field_aabb, compute_hull_aabb,
+    compute_hull_mass, compute_mass, compute_mesh_aabb, compute_sphere_aabb, compute_sphere_mass,
+    get_sweep_transform, is_valid_ray, overlap_capsule, overlap_compound, overlap_height_field,
+    overlap_hull, overlap_mesh, overlap_sphere, ray_cast_capsule, ray_cast_compound,
+    ray_cast_height_field, ray_cast_hollow_sphere, ray_cast_hull, ray_cast_mesh, ray_cast_sphere,
+    shape_cast, shape_cast_capsule, shape_cast_compound, shape_cast_height_field, shape_cast_hull,
+    shape_cast_mesh, shape_cast_sphere, shape_distance, time_of_impact, BoxShape, Capsule,
+    DistanceOutput, FeaturePair, LocalManifold, LocalManifoldPoint, MeshEdgeFlags, RayCastInput,
+    ShapeCastInput, ShapeCastOutput, SimpleShape, Sphere, Sweep, TimeOfImpactInput,
+    TimeOfImpactOutput, TimeOfImpactState, TriangleFeature,
 };
 pub use compound::{
     Compound, CompoundCapsule, CompoundChild, CompoundHull, CompoundMesh, CompoundPart,
@@ -64,7 +68,13 @@ pub use joint::{
     RevoluteJoint, RevoluteJointDef, SphericalJoint, SphericalJointDef, WeldJoint, WeldJointDef,
     WheelJoint, WheelJointDef,
 };
-pub use math::{Aabb, Filter, MassData, Matrix3, Quat, SurfaceMaterial, Transform, Vec3};
+pub use math::{
+    compute_cos_sin, compute_quat_between_unit_vectors, deterministic_atan2, is_valid_aabb,
+    is_valid_float, is_valid_matrix3, is_valid_quat, is_valid_transform, is_valid_vec3,
+    line_distance, make_quat_from_matrix, point_to_segment_distance, segment_distance, steiner,
+    Aabb, CosSin, Filter, MassData, Matrix3, Quat, SegmentDistance, SurfaceMaterial, Transform,
+    Vec3,
+};
 pub use mesh::{HeightField, Mesh, MeshCreateOptions, MeshQueryTriangle, MeshTriangle};
 pub use query::{
     BodyCastHit, BodyClosestPoint, BodyPlane, CastHit, MoverPlane, Plane, QueryFilter, QueryStats,

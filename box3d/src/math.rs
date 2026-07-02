@@ -106,6 +106,14 @@ pub struct Matrix3 {
     pub cz: Vec3,
 }
 
+impl Matrix3 {
+    pub const IDENTITY: Self = Self {
+        cx: Vec3::new(1.0, 0.0, 0.0),
+        cy: Vec3::new(0.0, 1.0, 0.0),
+        cz: Vec3::new(0.0, 0.0, 1.0),
+    };
+}
+
 impl From<Matrix3> for sys::b3Matrix3 {
     fn from(value: Matrix3) -> Self {
         Self {
@@ -122,6 +130,40 @@ impl From<sys::b3Matrix3> for Matrix3 {
             cx: value.cx.into(),
             cy: value.cy.into(),
             cz: value.cz.into(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CosSin {
+    pub cosine: f32,
+    pub sine: f32,
+}
+
+impl From<sys::b3CosSin> for CosSin {
+    fn from(value: sys::b3CosSin) -> Self {
+        Self {
+            cosine: value.cosine,
+            sine: value.sine,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SegmentDistance {
+    pub point1: Vec3,
+    pub fraction1: f32,
+    pub point2: Vec3,
+    pub fraction2: f32,
+}
+
+impl From<sys::b3SegmentDistanceResult> for SegmentDistance {
+    fn from(value: sys::b3SegmentDistanceResult) -> Self {
+        Self {
+            point1: value.point1.into(),
+            fraction1: value.fraction1,
+            point2: value.point2.into(),
+            fraction2: value.fraction2,
         }
     }
 }
@@ -252,6 +294,63 @@ impl From<sys::b3SurfaceMaterial> for SurfaceMaterial {
     }
 }
 
+pub fn deterministic_atan2(y: f32, x: f32) -> f32 {
+    unsafe { sys::b3Atan2(y, x) }
+}
+
+pub fn compute_cos_sin(radians: f32) -> CosSin {
+    unsafe { sys::b3ComputeCosSin(radians) }.into()
+}
+
+pub fn make_quat_from_matrix(matrix: Matrix3) -> Quat {
+    let matrix = matrix.into();
+    unsafe { sys::b3MakeQuatFromMatrix(&matrix) }.into()
+}
+
+pub fn compute_quat_between_unit_vectors(v1: Vec3, v2: Vec3) -> Quat {
+    unsafe { sys::b3ComputeQuatBetweenUnitVectors(v1.into(), v2.into()) }.into()
+}
+
+pub fn steiner(mass: f32, origin: Vec3) -> Matrix3 {
+    unsafe { sys::b3Steiner(mass, origin.into()) }.into()
+}
+
+pub fn point_to_segment_distance(a: Vec3, b: Vec3, q: Vec3) -> Vec3 {
+    unsafe { sys::b3PointToSegmentDistance(a.into(), b.into(), q.into()) }.into()
+}
+
+pub fn line_distance(p1: Vec3, d1: Vec3, p2: Vec3, d2: Vec3) -> SegmentDistance {
+    unsafe { sys::b3LineDistance(p1.into(), d1.into(), p2.into(), d2.into()) }.into()
+}
+
+pub fn segment_distance(p1: Vec3, q1: Vec3, p2: Vec3, q2: Vec3) -> SegmentDistance {
+    unsafe { sys::b3SegmentDistance(p1.into(), q1.into(), p2.into(), q2.into()) }.into()
+}
+
+pub fn is_valid_float(value: f32) -> bool {
+    unsafe { sys::b3IsValidFloat(value) }
+}
+
+pub fn is_valid_vec3(value: Vec3) -> bool {
+    unsafe { sys::b3IsValidVec3(value.into()) }
+}
+
+pub fn is_valid_quat(value: Quat) -> bool {
+    unsafe { sys::b3IsValidQuat(value.into()) }
+}
+
+pub fn is_valid_transform(value: Transform) -> bool {
+    unsafe { sys::b3IsValidTransform(value.into()) }
+}
+
+pub fn is_valid_matrix3(value: Matrix3) -> bool {
+    unsafe { sys::b3IsValidMatrix3(value.into()) }
+}
+
+pub fn is_valid_aabb(value: Aabb) -> bool {
+    unsafe { sys::b3IsValidAABB(value.into()) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,5 +399,57 @@ mod tests {
             SurfaceMaterial::from(sys::b3SurfaceMaterial::from(material)),
             material
         );
+    }
+
+    #[test]
+    fn math_helpers_return_copied_values() {
+        let angle = deterministic_atan2(1.0, 0.0);
+        assert!((angle - std::f32::consts::FRAC_PI_2).abs() < 1.0e-3);
+
+        let cs = compute_cos_sin(0.0);
+        assert!((cs.cosine - 1.0).abs() < 1.0e-6);
+        assert!(cs.sine.abs() < 1.0e-6);
+
+        let quat = make_quat_from_matrix(Matrix3::IDENTITY);
+        assert!(is_valid_quat(quat));
+        let between =
+            compute_quat_between_unit_vectors(Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
+        assert!(is_valid_quat(between));
+
+        let inertia = steiner(2.0, Vec3::new(1.0, 0.0, 0.0));
+        assert!(is_valid_matrix3(inertia));
+
+        let closest = point_to_segment_distance(
+            Vec3::ZERO,
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+        );
+        assert_eq!(closest, Vec3::new(1.0, 0.0, 0.0));
+
+        let line = line_distance(
+            Vec3::ZERO,
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+        );
+        assert_eq!(line.point1, Vec3::ZERO);
+        assert_eq!(line.point2, Vec3::new(0.0, 1.0, 0.0));
+
+        let segment = segment_distance(
+            Vec3::ZERO,
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+        );
+        assert_eq!(segment.point1, Vec3::ZERO);
+        assert_eq!(segment.point2, Vec3::new(0.0, 1.0, 0.0));
+
+        assert!(is_valid_float(1.0));
+        assert!(is_valid_vec3(Vec3::ZERO));
+        assert!(is_valid_transform(Transform::IDENTITY));
+        assert!(is_valid_aabb(Aabb {
+            lower_bound: Vec3::ZERO,
+            upper_bound: Vec3::new(1.0, 1.0, 1.0),
+        }));
     }
 }
