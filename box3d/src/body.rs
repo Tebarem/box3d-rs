@@ -1,13 +1,13 @@
 use std::{
     ffi::{c_void, CStr, CString},
     marker::PhantomData,
-    slice,
 };
 
 use box3d_sys as sys;
 
 use crate::{
-    events::{BodyId, ContactId, JointId, ShapeId, WorldId},
+    contact::ContactData,
+    events::{BodyId, JointId, ShapeId, WorldId},
     handle,
     math::{MassData, Matrix3, Quat, Transform, Vec3},
     shape::{raw_shape_def, Shape, ShapeDef},
@@ -110,37 +110,6 @@ impl From<MotionLocks> for sys::b3MotionLocks {
             angularZ: value.angular_z,
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ContactData {
-    pub contact: ContactId,
-    pub shape_a: ShapeId,
-    pub shape_b: ShapeId,
-    pub manifolds: Vec<ContactManifold>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ContactManifold {
-    pub points: Vec<ContactPoint>,
-    pub normal: Vec3,
-    pub twist_impulse: f32,
-    pub friction_impulse: Vec3,
-    pub rolling_impulse: Vec3,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ContactPoint {
-    pub anchor_a: Vec3,
-    pub anchor_b: Vec3,
-    pub separation: f32,
-    pub base_separation: f32,
-    pub normal_impulse: f32,
-    pub total_normal_impulse: f32,
-    pub normal_velocity: f32,
-    pub feature_id: u32,
-    pub triangle_index: i32,
-    pub persisted: bool,
 }
 
 impl<'world> Body<'world> {
@@ -475,61 +444,6 @@ impl<'world> Body<'world> {
         let raw = handle::shape(unsafe { sys::b3CreateHullShape(self.raw, &raw_def, &hull.base) })?;
 
         Ok(Shape::from_raw(raw))
-    }
-}
-
-impl From<sys::b3ContactData> for ContactData {
-    fn from(value: sys::b3ContactData) -> Self {
-        let manifolds = if value.manifoldCount <= 0 || value.manifolds.is_null() {
-            Vec::new()
-        } else {
-            unsafe { slice::from_raw_parts(value.manifolds, value.manifoldCount as usize) }
-                .iter()
-                .copied()
-                .map(ContactManifold::from)
-                .collect()
-        };
-
-        Self {
-            contact: ContactId::from_raw(value.contactId),
-            shape_a: ShapeId::from_raw(value.shapeIdA),
-            shape_b: ShapeId::from_raw(value.shapeIdB),
-            manifolds,
-        }
-    }
-}
-
-impl From<sys::b3Manifold> for ContactManifold {
-    fn from(value: sys::b3Manifold) -> Self {
-        let point_count = value.pointCount.clamp(0, value.points.len() as i32) as usize;
-        Self {
-            points: value.points[..point_count]
-                .iter()
-                .copied()
-                .map(ContactPoint::from)
-                .collect(),
-            normal: value.normal.into(),
-            twist_impulse: value.twistImpulse,
-            friction_impulse: value.frictionImpulse.into(),
-            rolling_impulse: value.rollingImpulse.into(),
-        }
-    }
-}
-
-impl From<sys::b3ManifoldPoint> for ContactPoint {
-    fn from(value: sys::b3ManifoldPoint) -> Self {
-        Self {
-            anchor_a: value.anchorA.into(),
-            anchor_b: value.anchorB.into(),
-            separation: value.separation,
-            base_separation: value.baseSeparation,
-            normal_impulse: value.normalImpulse,
-            total_normal_impulse: value.totalNormalImpulse,
-            normal_velocity: value.normalVelocity,
-            feature_id: value.featureId,
-            triangle_index: value.triangleIndex,
-            persisted: value.persisted,
-        }
     }
 }
 

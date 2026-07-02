@@ -132,6 +132,10 @@ impl ContactId {
         Self { raw }
     }
 
+    pub(crate) fn raw(self) -> sys::b3ContactId {
+        self.raw
+    }
+
     pub const fn to_bits(self) -> [u32; 3] {
         [
             self.raw.index1 as u32,

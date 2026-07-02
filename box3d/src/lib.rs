@@ -6,6 +6,7 @@ mod callbacks;
 mod character;
 mod collision;
 mod compound;
+mod contact;
 mod debug_draw;
 mod error;
 mod events;
@@ -25,7 +26,7 @@ pub use base::{
     milliseconds_and_reset, set_length_units_per_meter, set_stall_threshold, sleep,
     stall_threshold, ticks, version, yield_now, Version, HASH_INIT,
 };
-pub use body::{Body, BodyDef, BodyType, ContactData, ContactManifold, ContactPoint, MotionLocks};
+pub use body::{Body, BodyDef, BodyType, MotionLocks};
 pub use callbacks::PreSolveContact;
 pub use character::{clip_vector, solve_planes, CollisionPlane, MoverCapsule};
 pub use collision::{
@@ -33,6 +34,7 @@ pub use collision::{
     ShapeCastOutput, SimpleShape, Sphere,
 };
 pub use compound::{Compound, CompoundPart};
+pub use contact::{ContactData, ContactManifold, ContactPoint};
 pub use debug_draw::{DebugDraw, DEFAULT_DEBUG_MASK};
 pub use error::{Error, Result};
 pub use events::{

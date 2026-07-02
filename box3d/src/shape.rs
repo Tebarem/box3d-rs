@@ -3,8 +3,9 @@ use std::{ffi::c_void, marker::PhantomData};
 use box3d_sys as sys;
 
 use crate::{
-    body::{Body, ContactData},
+    body::Body,
     collision::{Capsule, ShapeCastOutput, Sphere},
+    contact::ContactData,
     events::{BodyId, ShapeId, WorldId},
     handle,
     hull::HullRef,
