@@ -52,29 +52,43 @@ struct DebugDrawContext<'a, D> {
 
 impl World {
     pub fn draw<D: DebugDraw>(&self, draw: &mut D, mask_bits: u64) {
-        let mut context = DebugDrawContext { draw, panic: None };
-        let mut raw = unsafe { sys::b3DefaultDebugDraw() };
-        raw.DrawShapeFcn = Some(draw_shape::<D>);
-        raw.DrawSegmentFcn = Some(draw_segment::<D>);
-        raw.DrawTransformFcn = Some(draw_transform::<D>);
-        raw.DrawPointFcn = Some(draw_point::<D>);
-        raw.DrawSphereFcn = Some(draw_sphere::<D>);
-        raw.DrawCapsuleFcn = Some(draw_capsule::<D>);
-        raw.DrawBoundsFcn = Some(draw_bounds::<D>);
-        raw.DrawBoxFcn = Some(draw_box::<D>);
-        raw.DrawStringFcn = Some(draw_string::<D>);
-        raw.drawShapes = true;
-        raw.drawJoints = true;
-        raw.drawBounds = true;
-        raw.drawMass = true;
-        raw.context = (&mut context as *mut DebugDrawContext<'_, D>).cast();
-
-        unsafe { sys::b3World_Draw(self.raw(), &mut raw, mask_bits) };
-
-        if let Some(panic) = context.panic.take() {
-            resume_unwind(panic);
-        }
+        with_raw_debug_draw(draw, |raw| unsafe {
+            sys::b3World_Draw(self.raw(), raw, mask_bits)
+        });
     }
+}
+
+pub(crate) fn with_raw_debug_draw<D, R>(
+    draw: &mut D,
+    f: impl FnOnce(&mut sys::b3DebugDraw) -> R,
+) -> R
+where
+    D: DebugDraw,
+{
+    let mut context = DebugDrawContext { draw, panic: None };
+    let mut raw = unsafe { sys::b3DefaultDebugDraw() };
+    raw.DrawShapeFcn = Some(draw_shape::<D>);
+    raw.DrawSegmentFcn = Some(draw_segment::<D>);
+    raw.DrawTransformFcn = Some(draw_transform::<D>);
+    raw.DrawPointFcn = Some(draw_point::<D>);
+    raw.DrawSphereFcn = Some(draw_sphere::<D>);
+    raw.DrawCapsuleFcn = Some(draw_capsule::<D>);
+    raw.DrawBoundsFcn = Some(draw_bounds::<D>);
+    raw.DrawBoxFcn = Some(draw_box::<D>);
+    raw.DrawStringFcn = Some(draw_string::<D>);
+    raw.drawShapes = true;
+    raw.drawJoints = true;
+    raw.drawBounds = true;
+    raw.drawMass = true;
+    raw.context = (&mut context as *mut DebugDrawContext<'_, D>).cast();
+
+    let result = f(&mut raw);
+
+    if let Some(panic) = context.panic.take() {
+        resume_unwind(panic);
+    }
+
+    result
 }
 
 unsafe extern "C" fn draw_shape<D: DebugDraw>(

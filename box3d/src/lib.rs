@@ -55,7 +55,9 @@ pub use query::{
     BodyCastHit, BodyClosestPoint, BodyPlane, CastHit, MoverPlane, Plane, QueryFilter, QueryStats,
     RayHit, ShapeProxy, ShapeRef,
 };
-pub use recording::{validate_replay, RecPlayer, RecPlayerInfo, Recording};
+pub use recording::{
+    validate_replay, RecPlayer, RecPlayerInfo, RecQueryHit, RecQueryInfo, RecQueryType, Recording,
+};
 pub use shape::{Shape, ShapeDef, ShapeType};
 pub use tasks::MAX_WORKERS;
 pub use world::{
