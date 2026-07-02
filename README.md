@@ -41,4 +41,4 @@ world.step(1.0 / 60.0, 4);
 
 Feature groups are intentionally small: worlds and bodies manage simulation state, shapes wrap common primitives and owned mesh data, queries/collision cover ray casts and mover helpers, joints/events expose typed handles, and advanced modules cover callbacks, debug draw, recording/replay, and worker-count control.
 
-The safe wrapper also has opt-in Bevy integration. Use the `box3d` crate's `bevy_ecs` feature for plain ECS support, or `bevy` for plugin/transform helpers as they land. No Bevy crates are pulled into default builds.
+Bevy integration lives in the separate `bevy_box3d` crate, so the core `box3d` wrapper stays free of Bevy dependencies.

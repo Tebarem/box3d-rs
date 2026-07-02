@@ -23,8 +23,9 @@ Feature groups include worlds/bodies/shapes, queries and standalone collision he
 
 ## Bevy
 
-Bevy support is opt-in. Enable `bevy_ecs` for plain ECS resources and systems, or `bevy` for the later plugin/transform helpers. The current integration targets Bevy 0.18 because Bevy 0.19 requires Rust 1.95.
+Use the separate `bevy_box3d` crate for Bevy integration. The core `box3d` crate has no Bevy dependency.
 
 ```toml
-box3d = { version = "0.1", features = ["bevy_ecs"] }
+box3d = "0.1"
+bevy_box3d = "0.1"
 ```
