@@ -3,13 +3,13 @@
 use bevy_app::{FixedUpdate, RunFixedMainLoop, RunFixedMainLoopSystems};
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::prelude::Entity;
-use bevy_ecs::prelude::{Component, Resource};
+use bevy_ecs::prelude::{Component, Message, Resource};
 use bevy_ecs::schedule::{IntoScheduleConfigs, SystemSet};
 use bevy_time::{Fixed, Time};
 
 use box3d::Vec3 as BoxVec3;
 use box3d::{
-    BodyDef, BodyId, BodyType, Capacity, Quat, ShapeDef, ShapeId, SurfaceMaterial,
+    BodyDef, BodyId, BodyType, Capacity, ContactId, Quat, ShapeDef, ShapeId, SurfaceMaterial,
     Transform as BoxTransform, World,
 };
 use std::collections::HashMap;
@@ -64,6 +64,54 @@ pub struct Box3dStats {
     pub interpolation_alpha: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Message)]
+pub struct Box3dContactStarted {
+    pub entity_a: Entity,
+    pub entity_b: Entity,
+    pub shape_a: ShapeId,
+    pub shape_b: ShapeId,
+    pub contact: ContactId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Message)]
+pub struct Box3dContactEnded {
+    pub entity_a: Entity,
+    pub entity_b: Entity,
+    pub shape_a: ShapeId,
+    pub shape_b: ShapeId,
+    pub contact: ContactId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Message)]
+pub struct Box3dContactHit {
+    pub entity_a: Entity,
+    pub entity_b: Entity,
+    pub shape_a: ShapeId,
+    pub shape_b: ShapeId,
+    pub contact: ContactId,
+    pub point: Vec3,
+    pub normal: Vec3,
+    pub approach_speed: f32,
+    pub user_material_id_a: u64,
+    pub user_material_id_b: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Message)]
+pub struct Box3dSensorStarted {
+    pub sensor_entity: Entity,
+    pub visitor_entity: Entity,
+    pub sensor: ShapeId,
+    pub visitor: ShapeId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Message)]
+pub struct Box3dSensorEnded {
+    pub sensor_entity: Entity,
+    pub visitor_entity: Entity,
+    pub sensor: ShapeId,
+    pub visitor: ShapeId,
+}
+
 /// Bevy plugin for Box3D world ownership, body creation, stepping, and transform sync.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Box3dPlugin {
@@ -72,7 +120,12 @@ pub struct Box3dPlugin {
 
 impl bevy_app::Plugin for Box3dPlugin {
     fn build(&self, app: &mut bevy_app::App) {
-        app.insert_resource(self.config)
+        app.add_message::<Box3dContactStarted>()
+            .add_message::<Box3dContactEnded>()
+            .add_message::<Box3dContactHit>()
+            .add_message::<Box3dSensorStarted>()
+            .add_message::<Box3dSensorEnded>()
+            .insert_resource(self.config)
             .insert_resource(Time::<Fixed>::from_hz(fixed_hz(self.config.fixed_hz)))
             .insert_resource(Box3dStats::default())
             .insert_non_send_resource(Box3dWorld::new(self.config))
@@ -177,6 +230,21 @@ impl Collider {
         self
     }
 
+    pub fn contact_events(mut self, enabled: bool) -> Self {
+        self.def.enable_contact_events = enabled;
+        self
+    }
+
+    pub fn sensor_events(mut self, enabled: bool) -> Self {
+        self.def.enable_sensor_events = enabled;
+        self
+    }
+
+    pub fn hit_events(mut self, enabled: bool) -> Self {
+        self.def.enable_hit_events = enabled;
+        self
+    }
+
     pub fn with_surface_material(mut self, material: SurfaceMaterial) -> Self {
         self.material = Some(material);
         self
@@ -256,6 +324,13 @@ impl Box3dWorld {
 
     fn body(&self, entity: Entity) -> Option<BodyId> {
         self.bodies.get(&entity).copied()
+    }
+
+    fn shape_pair(&self, shape_a: ShapeId, shape_b: ShapeId) -> Option<(Entity, Entity)> {
+        Some((
+            *self.shape_entities.get(&shape_a.to_bits())?,
+            *self.shape_entities.get(&shape_b.to_bits())?,
+        ))
     }
 
     fn remove_body(&mut self, entity: Entity) -> Vec<Entity> {
@@ -477,6 +552,11 @@ fn step_box3d_world(
     fixed_time: bevy_ecs::prelude::Res<Time<Fixed>>,
     config: bevy_ecs::prelude::Res<Box3dConfig>,
     mut stats: bevy_ecs::prelude::ResMut<Box3dStats>,
+    mut contact_started: bevy_ecs::prelude::MessageWriter<Box3dContactStarted>,
+    mut contact_ended: bevy_ecs::prelude::MessageWriter<Box3dContactEnded>,
+    mut contact_hit: bevy_ecs::prelude::MessageWriter<Box3dContactHit>,
+    mut sensor_started: bevy_ecs::prelude::MessageWriter<Box3dSensorStarted>,
+    mut sensor_ended: bevy_ecs::prelude::MessageWriter<Box3dSensorEnded>,
     mut physics: bevy_ecs::prelude::NonSendMut<Box3dWorld>,
 ) {
     physics.world.set_gravity(to_box3d_vec3(config.gravity));
@@ -491,9 +571,98 @@ fn step_box3d_world(
         store_previous_transforms(&mut physics);
         physics.world.step(time_step, config.sub_steps);
         store_current_transforms(&mut physics);
+        emit_box3d_messages(
+            &physics,
+            &mut contact_started,
+            &mut contact_ended,
+            &mut contact_hit,
+            &mut sensor_started,
+            &mut sensor_ended,
+        );
         update_stats(&mut stats, &physics, 1, time_step, started);
     } else {
         update_stats(&mut stats, &physics, 0, time_step, started);
+    }
+}
+
+fn emit_box3d_messages(
+    physics: &Box3dWorld,
+    contact_started: &mut bevy_ecs::prelude::MessageWriter<Box3dContactStarted>,
+    contact_ended: &mut bevy_ecs::prelude::MessageWriter<Box3dContactEnded>,
+    contact_hit: &mut bevy_ecs::prelude::MessageWriter<Box3dContactHit>,
+    sensor_started: &mut bevy_ecs::prelude::MessageWriter<Box3dSensorStarted>,
+    sensor_ended: &mut bevy_ecs::prelude::MessageWriter<Box3dSensorEnded>,
+) {
+    let contacts = physics.world.contact_events();
+    for event in contacts.begins() {
+        let Some((entity_a, entity_b)) = physics.shape_pair(event.shape_a, event.shape_b) else {
+            continue;
+        };
+        contact_started.write(Box3dContactStarted {
+            entity_a,
+            entity_b,
+            shape_a: event.shape_a,
+            shape_b: event.shape_b,
+            contact: event.contact,
+        });
+    }
+
+    for event in contacts.ends() {
+        let Some((entity_a, entity_b)) = physics.shape_pair(event.shape_a, event.shape_b) else {
+            continue;
+        };
+        contact_ended.write(Box3dContactEnded {
+            entity_a,
+            entity_b,
+            shape_a: event.shape_a,
+            shape_b: event.shape_b,
+            contact: event.contact,
+        });
+    }
+
+    for event in contacts.hits() {
+        let Some((entity_a, entity_b)) = physics.shape_pair(event.shape_a, event.shape_b) else {
+            continue;
+        };
+        contact_hit.write(Box3dContactHit {
+            entity_a,
+            entity_b,
+            shape_a: event.shape_a,
+            shape_b: event.shape_b,
+            contact: event.contact,
+            point: to_bevy_vec3(event.point),
+            normal: to_bevy_vec3(event.normal),
+            approach_speed: event.approach_speed,
+            user_material_id_a: event.user_material_id_a,
+            user_material_id_b: event.user_material_id_b,
+        });
+    }
+
+    let sensors = physics.world.sensor_events();
+    for event in sensors.begins() {
+        let Some((sensor_entity, visitor_entity)) = physics.shape_pair(event.sensor, event.visitor)
+        else {
+            continue;
+        };
+        sensor_started.write(Box3dSensorStarted {
+            sensor_entity,
+            visitor_entity,
+            sensor: event.sensor,
+            visitor: event.visitor,
+        });
+    }
+
+    for event in sensors.ends() {
+        let Some((sensor_entity, visitor_entity)) = physics.shape_pair(event.sensor, event.visitor)
+        else {
+            continue;
+        };
+        sensor_ended.write(Box3dSensorEnded {
+            sensor_entity,
+            visitor_entity,
+            sensor: event.sensor,
+            visitor: event.visitor,
+        });
     }
 }
 
@@ -710,10 +879,20 @@ mod tests {
 
     #[test]
     fn collider_builders_keep_shape_settings() {
-        let collider = Collider::sphere(0.5).with_density(2.0).with_friction(0.8);
+        let collider = Collider::sphere(0.5)
+            .with_density(2.0)
+            .with_friction(0.8)
+            .sensor(true)
+            .contact_events(true)
+            .sensor_events(true)
+            .hit_events(true);
 
         assert_eq!(collider.def.density, 2.0);
         assert_eq!(collider.def.friction, 0.8);
+        assert!(collider.def.is_sensor);
+        assert!(collider.def.enable_contact_events);
+        assert!(collider.def.enable_sensor_events);
+        assert!(collider.def.enable_hit_events);
     }
 
     #[test]
@@ -790,5 +969,103 @@ mod tests {
         assert_eq!(physics.bodies.len(), 1);
         assert_eq!(physics.shapes.len(), 2);
         assert_eq!(physics.shape_bodies.get(&child), Some(&body));
+    }
+
+    #[test]
+    fn contact_messages_map_shape_ids_to_entities() {
+        let mut app = bevy_app::App::new();
+        app.add_plugins(bevy_time::TimePlugin)
+            .insert_resource(bevy_time::TimeUpdateStrategy::FixedTimesteps(1));
+        app.add_plugins(Box3dPlugin::default());
+
+        let ground = app
+            .world_mut()
+            .spawn((
+                RigidBody::Static,
+                Collider::cuboid(Vec3::new(10.0, 0.5, 10.0)).contact_events(true),
+                bevy_transform::prelude::Transform::from_xyz(0.0, -0.5, 0.0),
+            ))
+            .id();
+        let ball = app
+            .world_mut()
+            .spawn((
+                RigidBody::Dynamic,
+                Collider::sphere(0.5)
+                    .with_density(1.0)
+                    .with_friction(0.3)
+                    .contact_events(true),
+                bevy_transform::prelude::Transform::from_xyz(0.0, 4.0, 0.0),
+            ))
+            .id();
+
+        let mut saw_contact = false;
+        for _ in 0..180 {
+            app.update();
+            saw_contact |= app
+                .world()
+                .resource::<bevy_ecs::message::Messages<Box3dContactStarted>>()
+                .iter_current_update_messages()
+                .any(|message| {
+                    (message.entity_a == ground && message.entity_b == ball)
+                        || (message.entity_a == ball && message.entity_b == ground)
+                });
+            if saw_contact {
+                break;
+            }
+        }
+
+        assert!(saw_contact);
+    }
+
+    #[test]
+    fn sensor_messages_map_shape_ids_to_entities() {
+        let mut app = bevy_app::App::new();
+        app.add_plugins(bevy_time::TimePlugin)
+            .insert_resource(bevy_time::TimeUpdateStrategy::FixedTimesteps(1));
+        app.add_plugins(Box3dPlugin {
+            config: Box3dConfig {
+                gravity: Vec3::ZERO,
+                ..Box3dConfig::default()
+            },
+        });
+
+        let sensor = app
+            .world_mut()
+            .spawn((
+                RigidBody::Static,
+                Collider::cuboid(Vec3::new(1.0, 1.0, 1.0))
+                    .sensor(true)
+                    .sensor_events(true),
+                bevy_transform::prelude::Transform::default(),
+            ))
+            .id();
+        let visitor = app
+            .world_mut()
+            .spawn((
+                RigidBody::Dynamic,
+                Collider::sphere(0.25)
+                    .with_density(1.0)
+                    .with_friction(0.3)
+                    .sensor_events(true),
+                bevy_transform::prelude::Transform::default(),
+            ))
+            .id();
+
+        let mut saw_sensor = false;
+        for _ in 0..10 {
+            app.update();
+            saw_sensor |= app
+                .world()
+                .resource::<bevy_ecs::message::Messages<Box3dSensorStarted>>()
+                .iter_current_update_messages()
+                .any(|message| {
+                    message.sensor_entity == sensor && message.visitor_entity == visitor
+                });
+            if saw_sensor {
+                break;
+            }
+        }
+
+        assert!(saw_sensor);
     }
 }
