@@ -3,6 +3,7 @@ pub enum Error {
     InvalidWorld,
     InvalidBody,
     InvalidShape,
+    InvalidInput,
     Null,
 }
 
