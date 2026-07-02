@@ -1,10 +1,13 @@
 //! Bevy integration for Box3D.
 
 use bevy_app::{FixedUpdate, RunFixedMainLoop, RunFixedMainLoopSystems};
+use bevy_color::Color;
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::prelude::Entity;
 use bevy_ecs::prelude::{Component, Message, Resource};
 use bevy_ecs::schedule::{IntoScheduleConfigs, SystemSet};
+use bevy_gizmos::prelude::Gizmos;
+use bevy_math::Isometry3d;
 use bevy_time::{Fixed, Time};
 
 use box3d::Vec3 as BoxVec3;
@@ -158,6 +161,39 @@ impl bevy_app::Plugin for Box3dPlugin {
         app.add_systems(
             RunFixedMainLoop,
             sync_box3d_to_transforms.in_set(Box3dSet::Writeback),
+        );
+    }
+}
+
+#[derive(Clone, Copy, Debug, Resource)]
+pub struct Box3dDebugConfig {
+    pub enabled: bool,
+    pub collider_color: Color,
+    pub sensor_color: Color,
+}
+
+impl Default for Box3dDebugConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            collider_color: Color::srgb(0.1, 0.85, 1.0),
+            sensor_color: Color::srgb(1.0, 0.8, 0.1),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Box3dDebugPlugin {
+    pub config: Box3dDebugConfig,
+}
+
+impl bevy_app::Plugin for Box3dDebugPlugin {
+    fn build(&self, app: &mut bevy_app::App) {
+        app.insert_resource(self.config).add_systems(
+            RunFixedMainLoop,
+            draw_box3d_colliders
+                .after(sync_box3d_to_transforms)
+                .in_set(Box3dSet::Writeback),
         );
     }
 }
@@ -746,6 +782,62 @@ fn sync_box3d_to_transforms(
     }
 }
 
+#[allow(clippy::type_complexity)]
+fn draw_box3d_colliders(
+    config: bevy_ecs::prelude::Res<Box3dDebugConfig>,
+    mut gizmos: Gizmos,
+    bodies: bevy_ecs::prelude::Query<
+        Option<&bevy_transform::prelude::Transform>,
+        bevy_ecs::prelude::With<Box3dBody>,
+    >,
+    colliders: bevy_ecs::prelude::Query<(
+        Entity,
+        &Collider,
+        Option<&ColliderParent>,
+        Option<&bevy_transform::prelude::Transform>,
+    )>,
+) {
+    if !config.enabled {
+        return;
+    }
+
+    for (entity, collider, parent, local_transform) in &colliders {
+        let body_entity = parent.map(|parent| parent.0).unwrap_or(entity);
+        let Ok(body_transform) = bodies.get(body_entity) else {
+            continue;
+        };
+        let body_transform = body_transform.copied().unwrap_or_default();
+        let transform = collider_debug_transform(
+            body_transform,
+            (entity != body_entity)
+                .then_some(local_transform)
+                .flatten()
+                .copied()
+                .unwrap_or_default(),
+        );
+        let color = if collider.def.is_sensor {
+            config.sensor_color
+        } else {
+            config.collider_color
+        };
+
+        match collider.shape {
+            ColliderShape::Cuboid { half_extents } => {
+                let mut cube = transform;
+                cube.scale = half_extents * 2.0;
+                gizmos.cube(cube, color);
+            }
+            ColliderShape::Sphere { radius } => {
+                gizmos.sphere(
+                    Isometry3d::new(transform.translation, transform.rotation),
+                    radius,
+                    color,
+                );
+            }
+        }
+    }
+}
+
 fn cleanup_box3d_bodies(
     mut commands: bevy_ecs::prelude::Commands,
     entities: &bevy_ecs::entity::Entities,
@@ -822,6 +914,17 @@ fn cleanup_box3d_shapes(
         if entities.contains(entity) {
             commands.entity(entity).remove::<Box3dShape>();
         }
+    }
+}
+
+fn collider_debug_transform(
+    body: bevy_transform::prelude::Transform,
+    local: bevy_transform::prelude::Transform,
+) -> bevy_transform::prelude::Transform {
+    bevy_transform::prelude::Transform {
+        translation: body.translation + body.rotation * local.translation,
+        rotation: body.rotation * local.rotation,
+        scale: Vec3::ONE,
     }
 }
 
@@ -1067,5 +1170,18 @@ mod tests {
         }
 
         assert!(saw_sensor);
+    }
+
+    #[test]
+    fn debug_transform_composes_child_offset_without_scale() {
+        let mut body = bevy_transform::prelude::Transform::from_xyz(1.0, 2.0, 3.0);
+        body.rotation = bevy_math::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        body.scale = Vec3::splat(10.0);
+
+        let local = bevy_transform::prelude::Transform::from_xyz(1.0, 0.0, 0.0);
+        let transform = collider_debug_transform(body, local);
+
+        assert!((transform.translation - Vec3::new(1.0, 3.0, 3.0)).length() < 0.0001);
+        assert_eq!(transform.scale, Vec3::ONE);
     }
 }

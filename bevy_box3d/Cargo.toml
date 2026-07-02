@@ -9,7 +9,9 @@ repository = "https://github.com/Tebarem/box3d-rs"
 
 [dependencies]
 bevy_app = { version = "0.18.1" }
+bevy_color = { version = "0.18.1" }
 bevy_ecs = { version = "0.18.1" }
+bevy_gizmos = { version = "0.18.1" }
 bevy_math = { version = "0.18.1" }
 bevy_time = { version = "0.18.1" }
 bevy_transform = { version = "0.18.1" }
