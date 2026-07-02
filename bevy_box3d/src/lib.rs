@@ -1,22 +1,14 @@
-//! Optional Bevy integration.
-//!
-//! This module is available with the `bevy_ecs` feature. The `bevy` feature
-//! enables [`Box3dPlugin`] and transform syncing.
+//! Bevy integration for Box3D.
 
-#[cfg(feature = "bevy")]
 use bevy_ecs::prelude::Entity;
 use bevy_ecs::prelude::{Component, Resource};
-#[cfg(feature = "bevy")]
 use bevy_ecs::schedule::IntoScheduleConfigs;
-#[cfg(feature = "bevy")]
-use box3d_sys as sys;
 
-#[cfg(feature = "bevy")]
-use crate::Vec3 as BoxVec3;
-#[cfg(feature = "bevy")]
-use crate::{handle, BodyDef, Quat, World};
-use crate::{BodyId, BodyType, Capacity, ShapeDef, ShapeId, SurfaceMaterial};
-#[cfg(feature = "bevy")]
+use box3d::Vec3 as BoxVec3;
+use box3d::{
+    BodyDef, BodyId, BodyType, Capacity, Quat, ShapeDef, ShapeId, SurfaceMaterial,
+    Transform as BoxTransform, World,
+};
 use std::collections::HashMap;
 
 pub use bevy_math::Vec3;
@@ -81,13 +73,11 @@ pub struct Box3dStats {
 }
 
 /// Bevy plugin for Box3D world ownership, body creation, stepping, and transform sync.
-#[cfg(feature = "bevy")]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Box3dPlugin {
     pub config: Box3dConfig,
 }
 
-#[cfg(feature = "bevy")]
 impl bevy_app::Plugin for Box3dPlugin {
     fn build(&self, app: &mut bevy_app::App) {
         app.insert_resource(self.config)
@@ -128,7 +118,6 @@ impl From<RigidBody> for BodyType {
 }
 
 /// Bevy collider component. One collider per entity for the first plugin pass.
-#[cfg_attr(not(feature = "bevy"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Component)]
 pub struct Collider {
     shape: ColliderShape,
@@ -216,24 +205,21 @@ pub struct Box3dShape {
 }
 
 /// Non-send Box3D world resource owned by the plugin.
-#[cfg(feature = "bevy")]
 pub struct Box3dWorld {
     world: World,
-    bodies: HashMap<Entity, sys::b3BodyId>,
+    bodies: HashMap<Entity, BodyId>,
     transforms: HashMap<Entity, InterpolatedTransform>,
     interpolation_alpha: f32,
     last_step: std::time::Instant,
     accumulator: f32,
 }
 
-#[cfg(feature = "bevy")]
 #[derive(Clone, Copy, Debug)]
 struct InterpolatedTransform {
-    previous: crate::Transform,
-    current: crate::Transform,
+    previous: BoxTransform,
+    current: BoxTransform,
 }
 
-#[cfg(feature = "bevy")]
 impl Box3dWorld {
     pub fn new(config: Box3dConfig) -> Self {
         let world = World::with_capacity(to_box3d_vec3(config.gravity), config.capacity);
@@ -254,28 +240,26 @@ impl Box3dWorld {
         &self.world
     }
 
-    fn body(&self, entity: Entity) -> Option<sys::b3BodyId> {
+    fn body(&self, entity: Entity) -> Option<BodyId> {
         self.bodies.get(&entity).copied()
     }
 
     fn remove_body(&mut self, entity: Entity) {
-        if let Some(raw) = self.bodies.remove(&entity) {
-            handle::destroy_body(raw);
+        if let Some(body) = self.bodies.remove(&entity) {
+            body.destroy();
         }
         self.transforms.remove(&entity);
     }
 }
 
-#[cfg(feature = "bevy")]
 impl Drop for Box3dWorld {
     fn drop(&mut self) {
-        for (_, raw) in self.bodies.drain() {
-            handle::destroy_body(raw);
+        for (_, body) in self.bodies.drain() {
+            body.destroy();
         }
     }
 }
 
-#[cfg(feature = "bevy")]
 #[allow(clippy::type_complexity)]
 fn create_box3d_bodies(
     mut commands: bevy_ecs::prelude::Commands,
@@ -295,13 +279,14 @@ fn create_box3d_bodies(
     for (entity, rigid_body, collider, transform, velocity, damping) in &query {
         let start = transform
             .map(bevy_transform_to_box3d)
-            .unwrap_or(crate::Transform::IDENTITY);
+            .unwrap_or(BoxTransform::IDENTITY);
 
         let body = physics.world.create_body(BodyDef {
             body_type: (*rigid_body).into(),
             position: start.p,
         });
         body.set_transform(start.p, start.q);
+        let body_id = body.id();
 
         if let Some(velocity) = velocity {
             body.set_linear_velocity(to_box3d_vec3(velocity.linear));
@@ -312,29 +297,25 @@ fn create_box3d_bodies(
             body.set_angular_damping(damping.angular);
         }
 
-        let body_id = body.id();
-        let raw_body = body.raw();
         let shape_id = collider.map(|collider| {
-            let shape = match collider.shape {
+            let id = match collider.shape {
                 ColliderShape::Cuboid { half_extents } => {
-                    body.create_box(to_box3d_vec3(half_extents), collider.def)
+                    body_id.create_box(to_box3d_vec3(half_extents), collider.def)
                 }
                 ColliderShape::Sphere { radius } => {
-                    body.create_sphere(BoxVec3::ZERO, radius, collider.def)
+                    body_id.create_sphere(BoxVec3::ZERO, radius, collider.def)
                 }
             };
 
             if let Some(material) = collider.material {
-                shape.set_surface_material(material);
+                id.set_surface_material(material);
             }
 
-            let id = shape.id();
-            std::mem::forget(shape);
             id
         });
 
         std::mem::forget(body);
-        physics.bodies.insert(entity, raw_body);
+        physics.bodies.insert(entity, body_id);
         physics.transforms.insert(
             entity,
             InterpolatedTransform {
@@ -351,7 +332,6 @@ fn create_box3d_bodies(
     }
 }
 
-#[cfg(feature = "bevy")]
 #[allow(clippy::type_complexity)]
 fn sync_velocity_to_box3d(
     physics: bevy_ecs::prelude::NonSend<Box3dWorld>,
@@ -364,18 +344,15 @@ fn sync_velocity_to_box3d(
     >,
 ) {
     for (entity, velocity) in &query {
-        let Some(raw) = physics.body(entity) else {
+        let Some(body) = physics.body(entity) else {
             continue;
         };
 
-        unsafe {
-            sys::b3Body_SetLinearVelocity(raw, to_box3d_vec3(velocity.linear).into());
-            sys::b3Body_SetAngularVelocity(raw, to_box3d_vec3(velocity.angular).into());
-        }
+        body.set_linear_velocity(to_box3d_vec3(velocity.linear));
+        body.set_angular_velocity(to_box3d_vec3(velocity.angular));
     }
 }
 
-#[cfg(feature = "bevy")]
 #[allow(clippy::type_complexity)]
 fn sync_damping_to_box3d(
     physics: bevy_ecs::prelude::NonSend<Box3dWorld>,
@@ -388,18 +365,15 @@ fn sync_damping_to_box3d(
     >,
 ) {
     for (entity, damping) in &query {
-        let Some(raw) = physics.body(entity) else {
+        let Some(body) = physics.body(entity) else {
             continue;
         };
 
-        unsafe {
-            sys::b3Body_SetLinearDamping(raw, damping.linear);
-            sys::b3Body_SetAngularDamping(raw, damping.angular);
-        }
+        body.set_linear_damping(damping.linear);
+        body.set_angular_damping(damping.angular);
     }
 }
 
-#[cfg(feature = "bevy")]
 #[allow(clippy::type_complexity)]
 fn sync_static_transforms_to_box3d(
     physics: bevy_ecs::prelude::NonSend<Box3dWorld>,
@@ -416,15 +390,14 @@ fn sync_static_transforms_to_box3d(
             continue;
         }
 
-        let Some(raw) = physics.body(entity) else {
+        let Some(body) = physics.body(entity) else {
             continue;
         };
         let transform = bevy_transform_to_box3d(transform);
-        unsafe { sys::b3Body_SetTransform(raw, transform.p.into(), transform.q.into()) };
+        body.set_transform(transform.p, transform.q);
     }
 }
 
-#[cfg(feature = "bevy")]
 fn step_box3d_world(
     config: bevy_ecs::prelude::Res<Box3dConfig>,
     mut stats: bevy_ecs::prelude::ResMut<Box3dStats>,
@@ -491,12 +464,10 @@ fn step_box3d_world(
     update_stats(&mut stats, &physics, step_count, time_step, started);
 }
 
-#[cfg(feature = "bevy")]
 fn fixed_time_step(ticks_per_second: f32) -> Option<f32> {
     (ticks_per_second.is_finite() && ticks_per_second > 0.0).then_some(1.0 / ticks_per_second)
 }
 
-#[cfg(feature = "bevy")]
 fn update_stats(
     stats: &mut Box3dStats,
     physics: &Box3dWorld,
@@ -511,29 +482,27 @@ fn update_stats(
     stats.interpolation_alpha = physics.interpolation_alpha;
 }
 
-#[cfg(feature = "bevy")]
 fn store_previous_transforms(physics: &mut Box3dWorld) {
     for transform in physics.transforms.values_mut() {
         transform.previous = transform.current;
     }
 }
 
-#[cfg(feature = "bevy")]
 fn store_current_transforms(physics: &mut Box3dWorld) {
     let bodies: Vec<_> = physics
         .bodies
         .iter()
-        .map(|(entity, raw)| (*entity, *raw))
+        .map(|(entity, body)| (*entity, *body))
         .collect();
-    for (entity, raw) in bodies {
-        let transform = unsafe { sys::b3Body_GetTransform(raw) }.into();
-        if let Some(entry) = physics.transforms.get_mut(&entity) {
+    for (entity, body) in bodies {
+        if let (Some(transform), Some(entry)) =
+            (body.transform(), physics.transforms.get_mut(&entity))
+        {
             entry.current = transform;
         }
     }
 }
 
-#[cfg(feature = "bevy")]
 fn interpolation_alpha(accumulator: f32, time_step: f32) -> f32 {
     if time_step > 0.0 {
         (accumulator / time_step).clamp(0.0, 1.0)
@@ -542,7 +511,6 @@ fn interpolation_alpha(accumulator: f32, time_step: f32) -> f32 {
     }
 }
 
-#[cfg(feature = "bevy")]
 fn sync_box3d_to_transforms(
     physics: bevy_ecs::prelude::NonSend<Box3dWorld>,
     mut query: bevy_ecs::prelude::Query<(
@@ -567,7 +535,6 @@ fn sync_box3d_to_transforms(
     }
 }
 
-#[cfg(feature = "bevy")]
 fn cleanup_box3d_bodies(
     mut commands: bevy_ecs::prelude::Commands,
     entities: &bevy_ecs::entity::Entities,
@@ -595,9 +562,8 @@ fn cleanup_box3d_bodies(
     }
 }
 
-#[cfg(feature = "bevy")]
-fn bevy_transform_to_box3d(transform: &bevy_transform::prelude::Transform) -> crate::Transform {
-    crate::Transform {
+fn bevy_transform_to_box3d(transform: &bevy_transform::prelude::Transform) -> BoxTransform {
+    BoxTransform {
         p: BoxVec3::new(
             transform.translation.x,
             transform.translation.y,
@@ -614,17 +580,14 @@ fn bevy_transform_to_box3d(transform: &bevy_transform::prelude::Transform) -> cr
     }
 }
 
-#[cfg(feature = "bevy")]
 fn to_box3d_vec3(value: Vec3) -> BoxVec3 {
     BoxVec3::new(value.x, value.y, value.z)
 }
 
-#[cfg(feature = "bevy")]
 fn to_bevy_vec3(value: BoxVec3) -> Vec3 {
     Vec3::new(value.x, value.y, value.z)
 }
 
-#[cfg(feature = "bevy")]
 fn lerp_vec3(from: BoxVec3, to: BoxVec3, alpha: f32) -> Vec3 {
     to_bevy_vec3(BoxVec3::new(
         from.x + (to.x - from.x) * alpha,
@@ -633,7 +596,6 @@ fn lerp_vec3(from: BoxVec3, to: BoxVec3, alpha: f32) -> Vec3 {
     ))
 }
 
-#[cfg(feature = "bevy")]
 fn to_bevy_quat(value: Quat) -> bevy_math::Quat {
     bevy_math::Quat::from_xyzw(value.v.x, value.v.y, value.v.z, value.s)
 }

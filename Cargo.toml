@@ -20,7 +20,7 @@ include = [
 ]
 
 [workspace]
-members = ["box3d"]
+members = ["box3d", "bevy_box3d"]
 resolver = "2"
 
 [features]

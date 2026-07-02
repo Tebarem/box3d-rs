@@ -1,8 +1,6 @@
 #![doc = include_str!("../README.md")]
 
 mod base;
-#[cfg(feature = "bevy_ecs")]
-pub mod bevy;
 mod body;
 mod callbacks;
 mod character;
