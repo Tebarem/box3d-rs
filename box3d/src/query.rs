@@ -98,11 +98,11 @@ impl<'a> ShapeProxy<'a> {
         Ok(Self { points, radius })
     }
 
-    fn raw_points(self) -> Vec<sys::b3Vec3> {
+    pub(crate) fn raw_points(self) -> Vec<sys::b3Vec3> {
         self.points.iter().copied().map(Into::into).collect()
     }
 
-    fn raw(self, points: &[sys::b3Vec3]) -> sys::b3ShapeProxy {
+    pub(crate) fn raw(self, points: &[sys::b3Vec3]) -> sys::b3ShapeProxy {
         sys::b3ShapeProxy {
             points: points.as_ptr(),
             count: points.len() as i32,

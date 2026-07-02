@@ -1,6 +1,9 @@
 use box3d_sys as sys;
 
-use crate::math::{Aabb, MassData, Transform, Vec3};
+use crate::{
+    math::{Aabb, MassData, Transform, Vec3},
+    query::ShapeProxy,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sphere {
@@ -99,6 +102,54 @@ pub enum SimpleShape {
     Box(BoxShape),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DistanceOutput {
+    pub point_a: Vec3,
+    pub point_b: Vec3,
+    pub normal: Vec3,
+    pub distance: f32,
+    pub iterations: i32,
+    pub simplex_count: i32,
+}
+
+impl From<sys::b3DistanceOutput> for DistanceOutput {
+    fn from(value: sys::b3DistanceOutput) -> Self {
+        Self {
+            point_a: value.pointA.into(),
+            point_b: value.pointB.into(),
+            normal: value.normal.into(),
+            distance: value.distance,
+            iterations: value.iterations,
+            simplex_count: value.simplexCount,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShapeCastOutput {
+    pub normal: Vec3,
+    pub point: Vec3,
+    pub fraction: f32,
+    pub iterations: i32,
+    pub triangle_index: i32,
+    pub child_index: i32,
+    pub material_index: i32,
+}
+
+impl ShapeCastOutput {
+    fn from_raw(value: sys::b3CastOutput) -> Option<Self> {
+        value.hit.then(|| Self {
+            normal: value.normal.into(),
+            point: value.point.into(),
+            fraction: value.fraction,
+            iterations: value.iterations,
+            triangle_index: value.triangleIndex,
+            child_index: value.childIndex,
+            material_index: value.materialIndex,
+        })
+    }
+}
+
 impl From<Sphere> for SimpleShape {
     fn from(value: Sphere) -> Self {
         Self::Sphere(value)
@@ -131,6 +182,53 @@ pub fn compute_mass(shape: impl Into<SimpleShape>, density: f32) -> MassData {
         SimpleShape::Capsule(shape) => compute_capsule_mass(shape, density),
         SimpleShape::Box(shape) => compute_box_mass(shape, density),
     }
+}
+
+pub fn shape_distance(
+    proxy_a: ShapeProxy<'_>,
+    proxy_b: ShapeProxy<'_>,
+    transform_b_to_a: Transform,
+    use_radii: bool,
+) -> DistanceOutput {
+    let points_a = proxy_a.raw_points();
+    let points_b = proxy_b.raw_points();
+    let input = sys::b3DistanceInput {
+        proxyA: proxy_a.raw(&points_a),
+        proxyB: proxy_b.raw(&points_b),
+        transform: transform_b_to_a.into(),
+        useRadii: use_radii,
+    };
+    let mut cache = sys::b3SimplexCache {
+        metric: 0.0,
+        count: 0,
+        indexA: [0; 4],
+        indexB: [0; 4],
+    };
+
+    unsafe { sys::b3ShapeDistance(&input, &mut cache, std::ptr::null_mut(), 0) }.into()
+}
+
+pub fn shape_cast(
+    proxy_a: ShapeProxy<'_>,
+    proxy_b: ShapeProxy<'_>,
+    transform_b_to_a: Transform,
+    translation_b: Vec3,
+    max_fraction: f32,
+    can_encroach: bool,
+) -> Option<ShapeCastOutput> {
+    assert!((0.0..=1.0).contains(&max_fraction));
+    let points_a = proxy_a.raw_points();
+    let points_b = proxy_b.raw_points();
+    let input = sys::b3ShapeCastPairInput {
+        proxyA: proxy_a.raw(&points_a),
+        proxyB: proxy_b.raw(&points_b),
+        transform: transform_b_to_a.into(),
+        translationB: translation_b.into(),
+        maxFraction: max_fraction,
+        canEncroach: can_encroach,
+    };
+
+    ShapeCastOutput::from_raw(unsafe { sys::b3ShapeCast(&input) })
 }
 
 pub fn compute_sphere_aabb(shape: Sphere, transform: Transform) -> Aabb {
@@ -214,5 +312,28 @@ mod tests {
         let mass = box_shape.compute_mass(0.5);
         assert_close(mass.mass, 24.0);
         assert_eq!(mass.center, Vec3::ZERO);
+    }
+
+    #[test]
+    fn proxy_distance_and_shape_cast_work() {
+        let point_a = [Vec3::ZERO];
+        let point_b = [Vec3::ZERO];
+        let proxy_a = ShapeProxy::new(&point_a, 0.5).unwrap();
+        let proxy_b = ShapeProxy::new(&point_b, 0.5).unwrap();
+        let transform = Transform::new(Vec3::new(2.0, 0.0, 0.0), Quat::IDENTITY);
+
+        let distance = shape_distance(proxy_a, proxy_b, transform, true);
+        assert_close(distance.distance, 1.0);
+
+        let cast = shape_cast(
+            proxy_a,
+            proxy_b,
+            transform,
+            Vec3::new(-3.0, 0.0, 0.0),
+            1.0,
+            false,
+        )
+        .expect("moving sphere should hit fixed sphere");
+        assert!(cast.fraction > 0.0 && cast.fraction < 1.0, "{cast:?}");
     }
 }

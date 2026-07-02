@@ -1,4 +1,5 @@
 mod body;
+mod collision;
 mod compound;
 mod error;
 mod handle;
@@ -10,6 +11,10 @@ mod shape;
 mod world;
 
 pub use body::{Body, BodyDef, BodyType};
+pub use collision::{
+    compute_aabb, compute_mass, shape_cast, shape_distance, BoxShape, Capsule, DistanceOutput,
+    ShapeCastOutput, SimpleShape, Sphere,
+};
 pub use compound::{Compound, CompoundPart};
 pub use error::{Error, Result};
 pub use hull::{BoxHull, Hull, HullRef};
@@ -18,7 +23,7 @@ pub use mesh::{HeightField, Mesh};
 pub use query::{
     CastHit, MoverPlane, Plane, QueryFilter, QueryStats, RayHit, ShapeProxy, ShapeRef,
 };
-pub use shape::{Shape, ShapeDef};
+pub use shape::{Shape, ShapeDef, ShapeType};
 pub use world::{Counters, Profile, World};
 
 #[cfg(test)]
