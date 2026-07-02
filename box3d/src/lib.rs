@@ -3,6 +3,7 @@ mod error;
 mod handle;
 mod hull;
 mod math;
+mod query;
 mod shape;
 mod world;
 
@@ -10,6 +11,7 @@ pub use body::{Body, BodyDef, BodyType};
 pub use error::{Error, Result};
 pub use hull::{BoxHull, Hull, HullRef};
 pub use math::{Aabb, Filter, MassData, Matrix3, Quat, SurfaceMaterial, Transform, Vec3};
+pub use query::{QueryFilter, RayHit};
 pub use shape::{Shape, ShapeDef};
 pub use world::{Counters, Profile, World};
 

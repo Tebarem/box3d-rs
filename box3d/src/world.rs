@@ -70,6 +70,10 @@ impl World {
         Self::try_new(gravity).expect("box3d returned an invalid world")
     }
 
+    pub(crate) fn raw(&self) -> sys::b3WorldId {
+        self.raw
+    }
+
     pub fn try_new(gravity: Vec3) -> Result<Self> {
         let mut def = unsafe { sys::b3DefaultWorldDef() };
         def.gravity = gravity.into();
