@@ -125,6 +125,37 @@ impl BodyId {
             .map(ShapeId::from_raw)
     }
 
+    pub fn create_transformed_box(
+        self,
+        half_extents: Vec3,
+        transform: Transform,
+        def: ShapeDef,
+    ) -> ShapeId {
+        self.try_create_transformed_box(half_extents, transform, def)
+            .expect("box3d returned an invalid shape")
+    }
+
+    pub fn try_create_transformed_box(
+        self,
+        half_extents: Vec3,
+        transform: Transform,
+        def: ShapeDef,
+    ) -> Result<ShapeId> {
+        assert!(self.is_valid());
+        let raw_def = raw_shape_def(def);
+        let hull = unsafe { sys::b3MakeBoxHull(half_extents.x, half_extents.y, half_extents.z) };
+        handle::shape(unsafe {
+            sys::b3CreateTransformedHullShape(
+                self.raw,
+                &raw_def,
+                &hull.base,
+                transform.into(),
+                Vec3::new(1.0, 1.0, 1.0).into(),
+            )
+        })
+        .map(ShapeId::from_raw)
+    }
+
     pub fn create_sphere(self, center: Vec3, radius: f32, def: ShapeDef) -> ShapeId {
         self.try_create_sphere(center, radius, def)
             .expect("box3d returned an invalid shape")
@@ -589,12 +620,21 @@ mod tests {
                 ..ShapeDef::default()
             },
         );
+        let box_shape = id.create_transformed_box(
+            Vec3::new(0.25, 0.25, 0.25),
+            Transform::new(Vec3::new(0.25, 0.0, 0.0), crate::math::Quat::IDENTITY),
+            ShapeDef {
+                density: 1.0,
+                ..ShapeDef::default()
+            },
+        );
         std::mem::forget(body);
 
         id.set_linear_velocity(Vec3::new(1.0, 0.0, 0.0));
         world.step(1.0 / 60.0, 4);
 
         assert!(shape.is_valid());
+        assert!(box_shape.is_valid());
         assert!(id.transform().unwrap().p.x > 0.0);
 
         id.destroy();

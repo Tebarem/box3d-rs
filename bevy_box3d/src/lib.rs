@@ -89,8 +89,10 @@ impl bevy_app::Plugin for Box3dPlugin {
                 FixedUpdate,
                 (
                     (
+                        cleanup_box3d_shapes,
                         cleanup_box3d_bodies,
                         create_box3d_bodies,
+                        create_box3d_shapes,
                         sync_velocity_to_box3d,
                         sync_damping_to_box3d,
                         sync_static_transforms_to_box3d,
@@ -125,13 +127,17 @@ impl From<RigidBody> for BodyType {
     }
 }
 
-/// Bevy collider component. One collider per entity for the first plugin pass.
+/// Bevy collider component.
 #[derive(Clone, Copy, Debug, Component)]
 pub struct Collider {
     shape: ColliderShape,
     def: ShapeDef,
     material: Option<SurfaceMaterial>,
 }
+
+/// Attach this collider entity to a different rigid-body entity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Component)]
+pub struct ColliderParent(pub Entity);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum ColliderShape {
@@ -206,7 +212,7 @@ pub struct Box3dBody {
     pub id: BodyId,
 }
 
-/// Native Box3D shape created for an entity.
+/// Native Box3D shape created for a collider entity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Component)]
 pub struct Box3dShape {
     pub id: ShapeId,
@@ -216,6 +222,9 @@ pub struct Box3dShape {
 pub struct Box3dWorld {
     world: World,
     bodies: HashMap<Entity, BodyId>,
+    shapes: HashMap<Entity, ShapeId>,
+    shape_bodies: HashMap<Entity, Entity>,
+    shape_entities: HashMap<u64, Entity>,
     transforms: HashMap<Entity, InterpolatedTransform>,
 }
 
@@ -234,6 +243,9 @@ impl Box3dWorld {
         Self {
             world,
             bodies: HashMap::new(),
+            shapes: HashMap::new(),
+            shape_bodies: HashMap::new(),
+            shape_entities: HashMap::new(),
             transforms: HashMap::new(),
         }
     }
@@ -246,11 +258,35 @@ impl Box3dWorld {
         self.bodies.get(&entity).copied()
     }
 
-    fn remove_body(&mut self, entity: Entity) {
+    fn remove_body(&mut self, entity: Entity) -> Vec<Entity> {
+        let shapes = self.remove_body_shapes(entity, false);
         if let Some(body) = self.bodies.remove(&entity) {
             body.destroy();
         }
         self.transforms.remove(&entity);
+        shapes
+    }
+
+    fn remove_shape(&mut self, entity: Entity, destroy: bool) {
+        if let Some(shape) = self.shapes.remove(&entity) {
+            self.shape_entities.remove(&shape.to_bits());
+            if destroy {
+                shape.destroy(true);
+            }
+        }
+        self.shape_bodies.remove(&entity);
+    }
+
+    fn remove_body_shapes(&mut self, body_entity: Entity, destroy: bool) -> Vec<Entity> {
+        let shapes: Vec<_> = self
+            .shape_bodies
+            .iter()
+            .filter_map(|(shape_entity, owner)| (*owner == body_entity).then_some(*shape_entity))
+            .collect();
+        for shape_entity in &shapes {
+            self.remove_shape(*shape_entity, destroy);
+        }
+        shapes
     }
 }
 
@@ -259,6 +295,9 @@ impl Drop for Box3dWorld {
         for (_, body) in self.bodies.drain() {
             body.destroy();
         }
+        self.shapes.clear();
+        self.shape_bodies.clear();
+        self.shape_entities.clear();
     }
 }
 
@@ -270,7 +309,6 @@ fn create_box3d_bodies(
         (
             Entity,
             &RigidBody,
-            Option<&Collider>,
             Option<&bevy_transform::prelude::Transform>,
             Option<&Velocity>,
             Option<&Damping>,
@@ -278,7 +316,7 @@ fn create_box3d_bodies(
         bevy_ecs::prelude::Without<Box3dBody>,
     >,
 ) {
-    for (entity, rigid_body, collider, transform, velocity, damping) in &query {
+    for (entity, rigid_body, transform, velocity, damping) in &query {
         let start = transform
             .map(bevy_transform_to_box3d)
             .unwrap_or(BoxTransform::IDENTITY);
@@ -299,23 +337,6 @@ fn create_box3d_bodies(
             body.set_angular_damping(damping.angular);
         }
 
-        let shape_id = collider.map(|collider| {
-            let id = match collider.shape {
-                ColliderShape::Cuboid { half_extents } => {
-                    body_id.create_box(to_box3d_vec3(half_extents), collider.def)
-                }
-                ColliderShape::Sphere { radius } => {
-                    body_id.create_sphere(BoxVec3::ZERO, radius, collider.def)
-                }
-            };
-
-            if let Some(material) = collider.material {
-                id.set_surface_material(material);
-            }
-
-            id
-        });
-
         std::mem::forget(body);
         physics.bodies.insert(entity, body_id);
         physics.transforms.insert(
@@ -326,11 +347,63 @@ fn create_box3d_bodies(
             },
         );
 
-        let mut entity_commands = commands.entity(entity);
-        entity_commands.insert(Box3dBody { id: body_id });
-        if let Some(id) = shape_id {
-            entity_commands.insert(Box3dShape { id });
+        commands.entity(entity).insert(Box3dBody { id: body_id });
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn create_box3d_shapes(
+    mut commands: bevy_ecs::prelude::Commands,
+    mut physics: bevy_ecs::prelude::NonSendMut<Box3dWorld>,
+    query: bevy_ecs::prelude::Query<
+        (
+            Entity,
+            &Collider,
+            Option<&ColliderParent>,
+            Option<&bevy_transform::prelude::Transform>,
+        ),
+        bevy_ecs::prelude::Without<Box3dShape>,
+    >,
+) {
+    for (entity, collider, parent, transform) in &query {
+        let body_entity = parent.map(|parent| parent.0).unwrap_or(entity);
+        let Some(body) = physics.body(body_entity) else {
+            continue;
+        };
+
+        let local_transform = if entity == body_entity {
+            BoxTransform::IDENTITY
+        } else {
+            transform
+                .map(bevy_transform_to_box3d)
+                .unwrap_or(BoxTransform::IDENTITY)
+        };
+
+        let shape = match collider.shape {
+            ColliderShape::Cuboid { half_extents } => {
+                if entity == body_entity {
+                    body.create_box(to_box3d_vec3(half_extents), collider.def)
+                } else {
+                    body.create_transformed_box(
+                        to_box3d_vec3(half_extents),
+                        local_transform,
+                        collider.def,
+                    )
+                }
+            }
+            ColliderShape::Sphere { radius } => {
+                body.create_sphere(local_transform.p, radius, collider.def)
+            }
+        };
+
+        if let Some(material) = collider.material {
+            shape.set_surface_material(material);
         }
+
+        physics.shapes.insert(entity, shape);
+        physics.shape_bodies.insert(entity, body_entity);
+        physics.shape_entities.insert(shape.to_bits(), entity);
+        commands.entity(entity).insert(Box3dShape { id: shape });
     }
 }
 
@@ -524,9 +597,61 @@ fn cleanup_box3d_bodies(
         .collect();
 
     for entity in removed {
-        physics.remove_body(entity);
+        let removed_shapes = physics.remove_body(entity);
+        for shape_entity in removed_shapes {
+            if entities.contains(shape_entity) {
+                commands.entity(shape_entity).remove::<Box3dShape>();
+            }
+        }
         if entities.contains(entity) {
-            commands.entity(entity).remove::<(Box3dBody, Box3dShape)>();
+            commands.entity(entity).remove::<Box3dBody>();
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn cleanup_box3d_shapes(
+    mut commands: bevy_ecs::prelude::Commands,
+    entities: &bevy_ecs::entity::Entities,
+    mut physics: bevy_ecs::prelude::NonSendMut<Box3dWorld>,
+    removed_colliders: bevy_ecs::prelude::Query<
+        Entity,
+        (
+            bevy_ecs::prelude::With<Box3dShape>,
+            bevy_ecs::prelude::Without<Collider>,
+        ),
+    >,
+    changed_colliders: bevy_ecs::prelude::Query<
+        Entity,
+        (
+            bevy_ecs::prelude::With<Box3dShape>,
+            bevy_ecs::prelude::Or<(
+                bevy_ecs::prelude::Changed<Collider>,
+                bevy_ecs::prelude::Changed<ColliderParent>,
+            )>,
+        ),
+    >,
+) {
+    let removed: Vec<_> = physics
+        .shapes
+        .keys()
+        .copied()
+        .filter(|entity| {
+            let missing_body = physics
+                .shape_bodies
+                .get(entity)
+                .is_some_and(|body| !physics.bodies.contains_key(body));
+            !entities.contains(*entity)
+                || removed_colliders.get(*entity).is_ok()
+                || changed_colliders.get(*entity).is_ok()
+                || missing_body
+        })
+        .collect();
+
+    for entity in removed {
+        physics.remove_shape(entity, true);
+        if entities.contains(entity) {
+            commands.entity(entity).remove::<Box3dShape>();
         }
     }
 }
@@ -628,5 +753,42 @@ mod tests {
         assert!(entity_ref.contains::<Box3dBody>());
         assert_eq!(app.world().resource::<Box3dStats>().body_count, 1);
         assert_eq!(app.world().resource::<Box3dStats>().time_step, 1.0 / 60.0);
+    }
+
+    #[test]
+    fn collider_parent_adds_shape_to_existing_body() {
+        let mut app = bevy_app::App::new();
+        app.add_plugins(bevy_time::TimePlugin)
+            .insert_resource(bevy_time::TimeUpdateStrategy::FixedTimesteps(1));
+        app.add_plugins(Box3dPlugin::default());
+
+        let body = app
+            .world_mut()
+            .spawn((
+                RigidBody::Dynamic,
+                Collider::cuboid(Vec3::new(0.5, 0.5, 0.5)).with_density(1.0),
+                bevy_transform::prelude::Transform::from_xyz(0.0, 4.0, 0.0),
+            ))
+            .id();
+        let child = app
+            .world_mut()
+            .spawn((
+                ColliderParent(body),
+                Collider::sphere(0.25).with_density(1.0),
+                bevy_transform::prelude::Transform::from_xyz(0.4, 0.0, 0.0),
+            ))
+            .id();
+
+        for _ in 0..3 {
+            app.update();
+        }
+
+        assert!(app.world().entity(body).contains::<Box3dShape>());
+        assert!(app.world().entity(child).contains::<Box3dShape>());
+
+        let physics = app.world().non_send_resource::<Box3dWorld>();
+        assert_eq!(physics.bodies.len(), 1);
+        assert_eq!(physics.shapes.len(), 2);
+        assert_eq!(physics.shape_bodies.get(&child), Some(&body));
     }
 }
