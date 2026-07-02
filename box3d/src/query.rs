@@ -12,6 +12,7 @@ use crate::{
     handle,
     math::{Aabb, Vec3},
     world::World,
+    Error, Result,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -76,6 +77,41 @@ impl From<sys::b3TreeStats> for QueryStats {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct ShapeProxy<'a> {
+    points: &'a [Vec3],
+    radius: f32,
+}
+
+impl<'a> ShapeProxy<'a> {
+    pub fn new(points: &'a [Vec3], radius: f32) -> Result<Self> {
+        if points.is_empty()
+            || points.len() > sys::B3_MAX_SHAPE_CAST_POINTS as usize
+            || radius < 0.0
+            || !radius.is_finite()
+            || points
+                .iter()
+                .any(|point| !point.x.is_finite() || !point.y.is_finite() || !point.z.is_finite())
+        {
+            return Err(Error::InvalidInput);
+        }
+
+        Ok(Self { points, radius })
+    }
+
+    fn raw_points(self) -> Vec<sys::b3Vec3> {
+        self.points.iter().copied().map(Into::into).collect()
+    }
+
+    fn raw(self, points: &[sys::b3Vec3]) -> sys::b3ShapeProxy {
+        sys::b3ShapeProxy {
+            points: points.as_ptr(),
+            count: points.len() as i32,
+            radius: self.radius,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct ShapeRef<'a> {
     raw: sys::b3ShapeId,
     _marker: PhantomData<&'a mut ()>,
@@ -124,6 +160,17 @@ impl From<sys::b3PlaneResult> for MoverPlane {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct CastHit<'a> {
+    pub shape: ShapeRef<'a>,
+    pub point: Vec3,
+    pub normal: Vec3,
+    pub user_material_id: u64,
+    pub fraction: f32,
+    pub triangle_index: i32,
+    pub child_index: i32,
+}
+
 type CallbackPanic = Box<dyn Any + Send + 'static>;
 
 struct ShapeCallbackContext<'a, F> {
@@ -147,6 +194,48 @@ where
         Err(panic) => {
             context.panic = Some(panic);
             false
+        }
+    }
+}
+
+struct CastCallbackContext<'a, F> {
+    f: &'a mut F,
+    panic: Option<CallbackPanic>,
+}
+
+unsafe extern "C" fn cast_callback<F>(
+    shape_id: sys::b3ShapeId,
+    point: sys::b3Pos,
+    normal: sys::b3Vec3,
+    fraction: f32,
+    user_material_id: u64,
+    triangle_index: i32,
+    child_index: i32,
+    context: *mut c_void,
+) -> f32
+where
+    F: for<'shape> FnMut(CastHit<'shape>) -> f32,
+{
+    let context = unsafe { &mut *context.cast::<CastCallbackContext<'_, F>>() };
+    if context.panic.is_some() {
+        return 0.0;
+    }
+
+    match catch_unwind(AssertUnwindSafe(|| {
+        (context.f)(CastHit {
+            shape: ShapeRef::from_raw(shape_id),
+            point: point.into(),
+            normal: normal.into(),
+            user_material_id,
+            fraction,
+            triangle_index,
+            child_index,
+        })
+    })) {
+        Ok(next_fraction) => next_fraction,
+        Err(panic) => {
+            context.panic = Some(panic);
+            0.0
         }
     }
 }
@@ -261,6 +350,38 @@ impl World {
             )
         };
         RayHit::from_raw(hit)
+    }
+
+    pub fn cast_shape<F>(
+        &self,
+        origin: Vec3,
+        proxy: ShapeProxy<'_>,
+        translation: Vec3,
+        filter: QueryFilter,
+        mut f: F,
+    ) -> QueryStats
+    where
+        F: for<'shape> FnMut(CastHit<'shape>) -> f32,
+    {
+        let raw_points = proxy.raw_points();
+        let raw_proxy = proxy.raw(&raw_points);
+        let mut context = CastCallbackContext {
+            f: &mut f,
+            panic: None,
+        };
+        let stats = unsafe {
+            sys::b3World_CastShape(
+                self.raw(),
+                origin.into(),
+                &raw_proxy,
+                translation.into(),
+                filter.into(),
+                Some(cast_callback::<F>),
+                (&mut context as *mut CastCallbackContext<'_, F>).cast(),
+            )
+        };
+        resume_callback_panic(context.panic.take());
+        stats.into()
     }
 
     pub fn cast_mover(
@@ -424,6 +545,31 @@ mod tests {
         );
 
         assert!(fraction > 0.0 && fraction < 1.0, "{fraction}");
+    }
+
+    #[test]
+    fn cast_shape_hits_static_wall() {
+        let world = World::new(Vec3::ZERO);
+        let wall = world.create_body(BodyDef::static_at(Vec3::new(2.0, 0.0, 0.0)));
+        let _wall_shape = wall.create_box(Vec3::new(0.5, 2.0, 2.0), ShapeDef::default());
+        let points = [Vec3::ZERO];
+        let proxy = ShapeProxy::new(&points, 0.25).unwrap();
+
+        let mut hit_fraction = 1.0;
+        let stats = world.cast_shape(
+            Vec3::ZERO,
+            proxy,
+            Vec3::new(4.0, 0.0, 0.0),
+            QueryFilter::default(),
+            |hit| {
+                assert!(hit.shape.is_valid());
+                hit_fraction = hit.fraction;
+                hit.fraction
+            },
+        );
+
+        assert!(hit_fraction > 0.0 && hit_fraction < 1.0, "{hit_fraction}");
+        assert!(stats.leaf_visits >= 1, "{stats:?}");
     }
 
     #[test]
