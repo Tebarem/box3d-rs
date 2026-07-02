@@ -124,7 +124,7 @@ impl Compound {
             }
         }
 
-        let mut def = sys::b3CompoundDef {
+        let def = sys::b3CompoundDef {
             capsules: as_mut_ptr(&mut capsules),
             capsuleCount: count(capsules.len())?,
             hulls: as_mut_ptr(&mut hulls),
@@ -134,7 +134,7 @@ impl Compound {
             spheres: as_mut_ptr(&mut spheres),
             sphereCount: count(spheres.len())?,
         };
-        let raw = NonNull::new(unsafe { sys::b3CreateCompound(&mut def) }).ok_or(Error::Null)?;
+        let raw = NonNull::new(unsafe { sys::b3CreateCompound(&def) }).ok_or(Error::Null)?;
 
         Ok(Self { raw })
     }

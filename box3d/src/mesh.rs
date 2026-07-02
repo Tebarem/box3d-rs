@@ -16,7 +16,7 @@ pub struct Mesh {
 
 impl Mesh {
     pub fn from_triangles(vertices: &[Vec3], indices: &[u32]) -> Result<Self> {
-        if vertices.len() < 3 || indices.is_empty() || indices.len() % 3 != 0 {
+        if vertices.len() < 3 || indices.is_empty() || !indices.len().is_multiple_of(3) {
             return Err(Error::InvalidInput);
         }
 
