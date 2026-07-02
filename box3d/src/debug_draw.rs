@@ -2,6 +2,7 @@ use std::{
     any::Any,
     ffi::{c_char, c_void, CStr},
     panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
+    ptr::NonNull,
 };
 
 use box3d_sys as sys;
@@ -13,9 +14,110 @@ use crate::{
 
 pub const DEFAULT_DEBUG_MASK: u64 = u64::MAX;
 
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DebugMaterial {
+    Default,
+    Matte,
+    Soft,
+    Dead,
+    Glossy,
+    Metallic,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct DebugShapeHandle(NonNull<c_void>);
+
+impl DebugShapeHandle {
+    pub fn from_ptr(ptr: *mut c_void) -> Option<Self> {
+        NonNull::new(ptr).map(Self)
+    }
+
+    pub fn as_ptr(self) -> *mut c_void {
+        self.0.as_ptr()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DebugDrawOptions {
+    pub drawing_bounds: Aabb,
+    pub force_scale: f32,
+    pub joint_scale: f32,
+    pub draw_shapes: bool,
+    pub draw_joints: bool,
+    pub draw_joint_extras: bool,
+    pub draw_bounds: bool,
+    pub draw_mass: bool,
+    pub draw_body_names: bool,
+    pub draw_contacts: bool,
+    pub draw_anchor_a: i32,
+    pub draw_graph_colors: bool,
+    pub draw_contact_features: bool,
+    pub draw_contact_normals: bool,
+    pub draw_contact_forces: bool,
+    pub draw_friction_forces: bool,
+    pub draw_islands: bool,
+}
+
+impl Default for DebugDrawOptions {
+    fn default() -> Self {
+        let raw = unsafe { sys::b3DefaultDebugDraw() };
+        Self {
+            drawing_bounds: raw.drawingBounds.into(),
+            force_scale: raw.forceScale,
+            joint_scale: raw.jointScale,
+            draw_shapes: true,
+            draw_joints: true,
+            draw_joint_extras: raw.drawJointExtras,
+            draw_bounds: true,
+            draw_mass: true,
+            draw_body_names: raw.drawBodyNames,
+            draw_contacts: raw.drawContacts,
+            draw_anchor_a: raw.drawAnchorA,
+            draw_graph_colors: raw.drawGraphColors,
+            draw_contact_features: raw.drawContactFeatures,
+            draw_contact_normals: raw.drawContactNormals,
+            draw_contact_forces: raw.drawContactForces,
+            draw_friction_forces: raw.drawFrictionForces,
+            draw_islands: raw.drawIslands,
+        }
+    }
+}
+
+impl DebugDrawOptions {
+    fn apply_to(self, raw: &mut sys::b3DebugDraw) {
+        raw.drawingBounds = self.drawing_bounds.into();
+        raw.forceScale = self.force_scale;
+        raw.jointScale = self.joint_scale;
+        raw.drawShapes = self.draw_shapes;
+        raw.drawJoints = self.draw_joints;
+        raw.drawJointExtras = self.draw_joint_extras;
+        raw.drawBounds = self.draw_bounds;
+        raw.drawMass = self.draw_mass;
+        raw.drawBodyNames = self.draw_body_names;
+        raw.drawContacts = self.draw_contacts;
+        raw.drawAnchorA = self.draw_anchor_a;
+        raw.drawGraphColors = self.draw_graph_colors;
+        raw.drawContactFeatures = self.draw_contact_features;
+        raw.drawContactNormals = self.draw_contact_normals;
+        raw.drawContactForces = self.draw_contact_forces;
+        raw.drawFrictionForces = self.draw_friction_forces;
+        raw.drawIslands = self.draw_islands;
+    }
+}
+
 pub trait DebugDraw {
     fn draw_shape(&mut self, _transform: Transform, _color: u32) -> bool {
         true
+    }
+
+    fn draw_shape_with_handle(
+        &mut self,
+        _shape: DebugShapeHandle,
+        transform: Transform,
+        color: u32,
+    ) -> bool {
+        self.draw_shape(transform, color)
     }
 
     fn draw_segment(&mut self, _p1: Vec3, _p2: Vec3, _color: u32) {}
@@ -56,10 +158,40 @@ impl World {
             sys::b3World_Draw(self.raw(), raw, mask_bits)
         });
     }
+
+    pub fn draw_with_options<D: DebugDraw>(
+        &self,
+        draw: &mut D,
+        mask_bits: u64,
+        options: DebugDrawOptions,
+    ) {
+        with_raw_debug_draw_options(draw, options, |raw| unsafe {
+            sys::b3World_Draw(self.raw(), raw, mask_bits)
+        });
+    }
+}
+
+pub fn graph_color(index: i32) -> u32 {
+    unsafe { sys::b3GetGraphColor(index) as u32 }
+}
+
+pub fn make_debug_color(rgb: u32, material: DebugMaterial) -> u32 {
+    (rgb & 0x00ff_ffff) | ((material as u32) << 24)
 }
 
 pub(crate) fn with_raw_debug_draw<D, R>(
     draw: &mut D,
+    f: impl FnOnce(&mut sys::b3DebugDraw) -> R,
+) -> R
+where
+    D: DebugDraw,
+{
+    with_raw_debug_draw_options(draw, DebugDrawOptions::default(), f)
+}
+
+pub(crate) fn with_raw_debug_draw_options<D, R>(
+    draw: &mut D,
+    options: DebugDrawOptions,
     f: impl FnOnce(&mut sys::b3DebugDraw) -> R,
 ) -> R
 where
@@ -76,10 +208,7 @@ where
     raw.DrawBoundsFcn = Some(draw_bounds::<D>);
     raw.DrawBoxFcn = Some(draw_box::<D>);
     raw.DrawStringFcn = Some(draw_string::<D>);
-    raw.drawShapes = true;
-    raw.drawJoints = true;
-    raw.drawBounds = true;
-    raw.drawMass = true;
+    options.apply_to(&mut raw);
     raw.context = (&mut context as *mut DebugDrawContext<'_, D>).cast();
 
     let result = f(&mut raw);
@@ -92,13 +221,16 @@ where
 }
 
 unsafe extern "C" fn draw_shape<D: DebugDraw>(
-    _user_shape: *mut c_void,
+    user_shape: *mut c_void,
     transform: sys::b3WorldTransform,
     color: sys::b3HexColor,
     context: *mut c_void,
 ) -> bool {
     with_draw::<D, _>(context, false, |draw| {
-        draw.draw_shape(transform.into(), color as u32)
+        match DebugShapeHandle::from_ptr(user_shape) {
+            Some(handle) => draw.draw_shape_with_handle(handle, transform.into(), color as u32),
+            None => draw.draw_shape(transform.into(), color as u32),
+        }
     })
 }
 
@@ -222,6 +354,7 @@ mod tests {
     struct Collector {
         bounds: usize,
         segments: usize,
+        shapes: usize,
         transforms: usize,
     }
 
@@ -232,6 +365,16 @@ mod tests {
 
         fn draw_segment(&mut self, _p1: Vec3, _p2: Vec3, _color: u32) {
             self.segments += 1;
+        }
+
+        fn draw_shape_with_handle(
+            &mut self,
+            _shape: DebugShapeHandle,
+            _transform: Transform,
+            _color: u32,
+        ) -> bool {
+            self.shapes += 1;
+            true
         }
 
         fn draw_transform(&mut self, _transform: Transform) {
@@ -266,5 +409,60 @@ mod tests {
         assert!(draw.bounds >= 2, "{:?}", draw.bounds);
         assert!(draw.segments > 0, "{:?}", draw.segments);
         assert!(draw.transforms > 0, "{:?}", draw.transforms);
+    }
+
+    #[test]
+    fn draw_with_options_can_disable_bounds() {
+        let world = World::new(Vec3::ZERO);
+        let body = world.create_body(BodyDef::dynamic_at(Vec3::ZERO));
+        let _shape = body.create_box(
+            Vec3::new(0.5, 0.5, 0.5),
+            ShapeDef {
+                density: 1.0,
+                ..ShapeDef::default()
+            },
+        );
+
+        let mut draw = Collector::default();
+        world.draw_with_options(
+            &mut draw,
+            DEFAULT_DEBUG_MASK,
+            DebugDrawOptions {
+                draw_bounds: false,
+                ..DebugDrawOptions::default()
+            },
+        );
+
+        assert_eq!(draw.bounds, 0);
+    }
+
+    #[test]
+    fn debug_color_helpers_match_native_layout() {
+        assert_eq!(
+            make_debug_color(0xff_123456, DebugMaterial::Metallic),
+            0x0512_3456
+        );
+        assert_ne!(graph_color(0), 0);
+    }
+
+    #[test]
+    fn draw_shape_trampoline_forwards_user_shape_handle() {
+        let mut draw = Collector::default();
+        let mut context = DebugDrawContext {
+            draw: &mut draw,
+            panic: None,
+        };
+
+        let ok = unsafe {
+            draw_shape::<Collector>(
+                std::ptr::dangling_mut(),
+                Transform::IDENTITY.into(),
+                0x00ff00,
+                (&mut context as *mut DebugDrawContext<'_, Collector>).cast(),
+            )
+        };
+
+        assert!(ok);
+        assert_eq!(draw.shapes, 1);
     }
 }

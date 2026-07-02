@@ -28,7 +28,7 @@ pub use base::{
     stall_threshold, ticks, version, yield_now, Version, HASH_INIT,
 };
 pub use body::{Body, BodyDef, BodyType, MotionLocks};
-pub use callbacks::PreSolveContact;
+pub use callbacks::{FrictionCallback, PreSolveContact, RestitutionCallback};
 pub use character::{clip_vector, solve_planes, CollisionPlane, MoverCapsule};
 pub use collision::{
     collide_capsule_and_sphere, collide_capsule_and_triangle, collide_capsules,
@@ -50,7 +50,10 @@ pub use compound::{
     CompoundSphere,
 };
 pub use contact::{ContactData, ContactManifold, ContactPoint};
-pub use debug_draw::{DebugDraw, DEFAULT_DEBUG_MASK};
+pub use debug_draw::{
+    graph_color, make_debug_color, DebugDraw, DebugDrawOptions, DebugMaterial, DebugShapeHandle,
+    DEFAULT_DEBUG_MASK,
+};
 pub use dynamic_tree::{
     DynamicTree, TreeBoxCastInput, TreeCastHit, TreeClosestHit, TreeHit, TreeProxy,
     TreeRayCastInput,

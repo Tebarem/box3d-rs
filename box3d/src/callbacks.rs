@@ -13,6 +13,9 @@ type CallbackPanic = Box<dyn Any + Send + 'static>;
 type CustomFilter = dyn Fn(ShapeId, ShapeId) -> bool + Send + Sync + 'static;
 type PreSolve = dyn Fn(PreSolveContact) -> bool + Send + Sync + 'static;
 
+pub type FrictionCallback = extern "C" fn(f32, u64, f32, u64) -> f32;
+pub type RestitutionCallback = extern "C" fn(f32, u64, f32, u64) -> f32;
+
 #[derive(Clone, Copy, Debug)]
 pub struct PreSolveContact {
     pub shape_a: ShapeId,
@@ -29,6 +32,22 @@ pub(crate) struct CallbackState {
 }
 
 impl World {
+    pub fn set_friction_callback(&self, callback: FrictionCallback) {
+        unsafe { sys::b3World_SetFrictionCallback(self.raw(), Some(callback)) };
+    }
+
+    pub fn clear_friction_callback(&self) {
+        unsafe { sys::b3World_SetFrictionCallback(self.raw(), None) };
+    }
+
+    pub fn set_restitution_callback(&self, callback: RestitutionCallback) {
+        unsafe { sys::b3World_SetRestitutionCallback(self.raw(), Some(callback)) };
+    }
+
+    pub fn clear_restitution_callback(&self) {
+        unsafe { sys::b3World_SetRestitutionCallback(self.raw(), None) };
+    }
+
     pub fn set_custom_filter<F>(&self, callback: F)
     where
         F: Fn(ShapeId, ShapeId) -> bool + Send + Sync + 'static,
@@ -201,12 +220,43 @@ impl CallbackState {
 #[cfg(test)]
 mod tests {
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc,
     };
 
     use super::*;
-    use crate::{BodyDef, ShapeDef};
+    use crate::{BodyDef, ShapeDef, SurfaceMaterial};
+
+    static FRICTION_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static FRICTION_ID_A: AtomicU64 = AtomicU64::new(0);
+    static FRICTION_ID_B: AtomicU64 = AtomicU64::new(0);
+    static RESTITUTION_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static RESTITUTION_ID_A: AtomicU64 = AtomicU64::new(0);
+    static RESTITUTION_ID_B: AtomicU64 = AtomicU64::new(0);
+
+    extern "C" fn test_friction(
+        friction_a: f32,
+        material_a: u64,
+        friction_b: f32,
+        material_b: u64,
+    ) -> f32 {
+        FRICTION_CALLS.fetch_add(1, Ordering::SeqCst);
+        FRICTION_ID_A.store(material_a, Ordering::SeqCst);
+        FRICTION_ID_B.store(material_b, Ordering::SeqCst);
+        friction_a.max(friction_b)
+    }
+
+    extern "C" fn test_restitution(
+        restitution_a: f32,
+        material_a: u64,
+        restitution_b: f32,
+        material_b: u64,
+    ) -> f32 {
+        RESTITUTION_CALLS.fetch_add(1, Ordering::SeqCst);
+        RESTITUTION_ID_A.store(material_a, Ordering::SeqCst);
+        RESTITUTION_ID_B.store(material_b, Ordering::SeqCst);
+        restitution_a.max(restitution_b)
+    }
 
     #[test]
     fn custom_filter_can_disable_collision() {
@@ -274,5 +324,60 @@ mod tests {
 
         assert!(calls.load(Ordering::Relaxed) > 0);
         assert!(body.position().y < -0.5, "{:?}", body.position());
+    }
+
+    #[test]
+    fn material_callbacks_run_during_contact_creation() {
+        FRICTION_CALLS.store(0, Ordering::SeqCst);
+        FRICTION_ID_A.store(0, Ordering::SeqCst);
+        FRICTION_ID_B.store(0, Ordering::SeqCst);
+        RESTITUTION_CALLS.store(0, Ordering::SeqCst);
+        RESTITUTION_ID_A.store(0, Ordering::SeqCst);
+        RESTITUTION_ID_B.store(0, Ordering::SeqCst);
+
+        let world = World::new(Vec3::ZERO);
+        world.set_friction_callback(test_friction);
+        world.set_restitution_callback(test_restitution);
+
+        let ground = world.create_body(BodyDef::static_at(Vec3::ZERO));
+        let ground_shape = ground.create_box(Vec3::new(1.0, 1.0, 1.0), ShapeDef::default());
+        ground_shape.set_surface_material(SurfaceMaterial {
+            friction: 0.2,
+            restitution: 0.1,
+            user_material_id: 11,
+            ..SurfaceMaterial::default()
+        });
+
+        let body = world.create_body(BodyDef::dynamic_at(Vec3::ZERO));
+        let body_shape = body.create_box(
+            Vec3::new(1.0, 1.0, 1.0),
+            ShapeDef {
+                density: 1.0,
+                ..ShapeDef::default()
+            },
+        );
+        body_shape.set_surface_material(SurfaceMaterial {
+            friction: 0.8,
+            restitution: 0.6,
+            user_material_id: 22,
+            ..SurfaceMaterial::default()
+        });
+
+        world.step(1.0 / 60.0, 4);
+        world.clear_friction_callback();
+        world.clear_restitution_callback();
+
+        assert!(FRICTION_CALLS.load(Ordering::SeqCst) > 0);
+        assert!(RESTITUTION_CALLS.load(Ordering::SeqCst) > 0);
+        let friction_ids = [
+            FRICTION_ID_A.load(Ordering::SeqCst),
+            FRICTION_ID_B.load(Ordering::SeqCst),
+        ];
+        let restitution_ids = [
+            RESTITUTION_ID_A.load(Ordering::SeqCst),
+            RESTITUTION_ID_B.load(Ordering::SeqCst),
+        ];
+        assert!(friction_ids.contains(&11) && friction_ids.contains(&22));
+        assert!(restitution_ids.contains(&11) && restitution_ids.contains(&22));
     }
 }
