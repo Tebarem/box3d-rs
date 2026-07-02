@@ -20,5 +20,3 @@ world.step(1.0 / 60.0, 4);
 ```
 
 Feature groups include worlds/bodies/shapes, queries and standalone collision helpers, joints, events, character movement, debug draw, callbacks, recording/replay, and worker-count control.
-
-Release agents must not run a real `cargo publish`; use `rtk cargo publish -p box3d --dry-run --locked` only when release validation is requested.
