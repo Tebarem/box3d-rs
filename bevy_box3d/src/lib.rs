@@ -20,10 +20,7 @@ use std::collections::HashMap;
 pub use bevy_math::Vec3;
 
 /// Bevy minor version supported by this integration.
-///
-/// Bevy 0.19 currently requires a newer Rust compiler than this workspace uses,
-/// so the feature is pinned to the latest compatible 0.18 release.
-pub const SUPPORTED_BEVY_VERSION: &str = "0.18";
+pub const SUPPORTED_BEVY_VERSION: &str = "0.19";
 
 /// Public system sets for ordering gameplay around Box3D.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
@@ -131,7 +128,7 @@ impl bevy_app::Plugin for Box3dPlugin {
             .insert_resource(self.config)
             .insert_resource(Time::<Fixed>::from_hz(fixed_hz(self.config.fixed_hz)))
             .insert_resource(Box3dStats::default())
-            .insert_non_send_resource(Box3dWorld::new(self.config))
+            .insert_non_send(Box3dWorld::new(self.config))
             .configure_sets(FixedUpdate, (Box3dSet::Sync, Box3dSet::Step).chain())
             .configure_sets(
                 RunFixedMainLoop,
@@ -1069,7 +1066,7 @@ mod tests {
         assert!(app.world().entity(body).contains::<Box3dShape>());
         assert!(app.world().entity(child).contains::<Box3dShape>());
 
-        let physics = app.world().non_send_resource::<Box3dWorld>();
+        let physics = app.world().non_send::<Box3dWorld>();
         assert_eq!(physics.bodies.len(), 1);
         assert_eq!(physics.shapes.len(), 2);
         assert_eq!(physics.shape_bodies.get(&child), Some(&body));

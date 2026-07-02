@@ -1,24 +1,25 @@
 [package]
 name = "bevy_box3d"
-version = "0.1.14"
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.95"
 description = "Bevy integration for Box3D."
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/Tebarem/box3d-rs"
 
 [dependencies]
-bevy_app = { version = "0.18.1" }
-bevy_color = { version = "0.18.1" }
-bevy_ecs = { version = "0.18.1" }
-bevy_gizmos = { version = "0.18.1" }
-bevy_math = { version = "0.18.1" }
-bevy_time = { version = "0.18.1" }
-bevy_transform = { version = "0.18.1" }
+bevy_app = { version = "0.19.0" }
+bevy_color = { version = "0.19.0" }
+bevy_ecs = { version = "0.19.0" }
+bevy_gizmos = { version = "0.19.0" }
+bevy_math = { version = "0.19.0" }
+bevy_time = { version = "0.19.0" }
+bevy_transform = { version = "0.19.0" }
 box3d = { path = "../box3d", version = "0.1.14" }
 
 [dev-dependencies]
-bevy = { version = "0.18.1", default-features = false, features = ["3d"] }
+bevy = { version = "0.19.0", default-features = false, features = ["3d", "ui"] }
 
 [[example]]
 name = "bevy_stack"

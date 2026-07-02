@@ -64,7 +64,7 @@ fn setup(
     commands.spawn((
         PointLight {
             intensity: 5_000.0,
-            shadows_enabled: true,
+            shadow_maps_enabled: true,
             ..default()
         },
         Transform::from_xyz(4.0, 10.0, 6.0),
@@ -111,7 +111,7 @@ fn setup(
     commands.spawn((
         Text::new("stats"),
         TextFont {
-            font_size: 16.0,
+            font_size: FontSize::Px(16.0),
             ..default()
         },
         TextColor(Color::WHITE),

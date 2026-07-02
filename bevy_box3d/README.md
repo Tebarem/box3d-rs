@@ -2,6 +2,8 @@
 
 Bevy integration for `box3d`.
 
+Supports Bevy 0.19 and Rust 1.95+.
+
 ```rust
 use bevy::prelude::*;
 use bevy_box3d::{Box3dPlugin, Collider, RigidBody};
