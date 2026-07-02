@@ -4,8 +4,10 @@ use box3d_sys as sys;
 
 use crate::{
     handle,
-    math::{Transform, Vec3},
+    math::{SurfaceMaterial, Transform, Vec3},
+    shape::{raw_shape_def, ShapeDef},
     world::World,
+    Result,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -73,6 +75,72 @@ impl BodyId {
     pub fn is_valid(self) -> bool {
         handle::is_body_valid(self.raw)
     }
+
+    pub fn destroy(self) {
+        handle::destroy_body(self.raw);
+    }
+
+    pub fn transform(self) -> Option<Transform> {
+        self.is_valid()
+            .then(|| unsafe { sys::b3Body_GetTransform(self.raw) }.into())
+    }
+
+    pub fn set_transform(self, position: Vec3, rotation: crate::Quat) {
+        assert!(self.is_valid());
+        unsafe { sys::b3Body_SetTransform(self.raw, position.into(), rotation.into()) };
+    }
+
+    pub fn set_linear_velocity(self, velocity: Vec3) {
+        assert!(self.is_valid());
+        unsafe { sys::b3Body_SetLinearVelocity(self.raw, velocity.into()) };
+    }
+
+    pub fn set_angular_velocity(self, velocity: Vec3) {
+        assert!(self.is_valid());
+        unsafe { sys::b3Body_SetAngularVelocity(self.raw, velocity.into()) };
+    }
+
+    pub fn set_linear_damping(self, damping: f32) {
+        assert!(damping.is_finite() && damping >= 0.0);
+        assert!(self.is_valid());
+        unsafe { sys::b3Body_SetLinearDamping(self.raw, damping) };
+    }
+
+    pub fn set_angular_damping(self, damping: f32) {
+        assert!(damping.is_finite() && damping >= 0.0);
+        assert!(self.is_valid());
+        unsafe { sys::b3Body_SetAngularDamping(self.raw, damping) };
+    }
+
+    pub fn create_box(self, half_extents: Vec3, def: ShapeDef) -> ShapeId {
+        self.try_create_box(half_extents, def)
+            .expect("box3d returned an invalid shape")
+    }
+
+    pub fn try_create_box(self, half_extents: Vec3, def: ShapeDef) -> Result<ShapeId> {
+        assert!(self.is_valid());
+        let raw_def = raw_shape_def(def);
+        let hull = unsafe { sys::b3MakeBoxHull(half_extents.x, half_extents.y, half_extents.z) };
+        handle::shape(unsafe { sys::b3CreateHullShape(self.raw, &raw_def, &hull.base) })
+            .map(ShapeId::from_raw)
+    }
+
+    pub fn create_sphere(self, center: Vec3, radius: f32, def: ShapeDef) -> ShapeId {
+        self.try_create_sphere(center, radius, def)
+            .expect("box3d returned an invalid shape")
+    }
+
+    pub fn try_create_sphere(self, center: Vec3, radius: f32, def: ShapeDef) -> Result<ShapeId> {
+        assert!(self.is_valid());
+        assert!(radius > 0.0);
+        let raw_def = raw_shape_def(def);
+        let sphere = sys::b3Sphere {
+            center: center.into(),
+            radius,
+        };
+        handle::shape(unsafe { sys::b3CreateSphereShape(self.raw, &raw_def, &sphere) })
+            .map(ShapeId::from_raw)
+    }
 }
 
 impl PartialEq for BodyId {
@@ -111,6 +179,28 @@ impl ShapeId {
 
     pub fn is_valid(self) -> bool {
         handle::is_shape_valid(self.raw)
+    }
+
+    pub fn destroy(self, update_body_mass: bool) {
+        handle::destroy_shape(self.raw, update_body_mass);
+    }
+
+    pub fn set_surface_material(self, material: SurfaceMaterial) {
+        assert!(self.is_valid());
+        assert!(material.friction.is_finite() && material.friction >= 0.0);
+        assert!(material.restitution.is_finite() && material.restitution >= 0.0);
+        assert!(material.rolling_resistance.is_finite() && material.rolling_resistance >= 0.0);
+        unsafe { sys::b3Shape_SetSurfaceMaterial(self.raw, material.into()) };
+    }
+
+    pub fn enable_contact_events(self, enabled: bool) {
+        assert!(self.is_valid());
+        unsafe { sys::b3Shape_EnableContactEvents(self.raw, enabled) };
+    }
+
+    pub fn enable_sensor_events(self, enabled: bool) {
+        assert!(self.is_valid());
+        unsafe { sys::b3Shape_EnableSensorEvents(self.raw, enabled) };
     }
 }
 
@@ -484,6 +574,31 @@ mod tests {
             .moves()
             .any(|event| event.body.is_valid() && event.transform.p.x > 0.0 && !event.fell_asleep);
         assert!(moved);
+    }
+
+    #[test]
+    fn body_id_methods_can_own_detached_body() {
+        let world = World::new(Vec3::ZERO);
+        let body = world.create_body(BodyDef::dynamic_at(Vec3::ZERO));
+        let id = body.id();
+        let shape = id.create_sphere(
+            Vec3::ZERO,
+            0.5,
+            ShapeDef {
+                density: 1.0,
+                ..ShapeDef::default()
+            },
+        );
+        std::mem::forget(body);
+
+        id.set_linear_velocity(Vec3::new(1.0, 0.0, 0.0));
+        world.step(1.0 / 60.0, 4);
+
+        assert!(shape.is_valid());
+        assert!(id.transform().unwrap().p.x > 0.0);
+
+        id.destroy();
+        assert!(!id.is_valid());
     }
 
     #[test]
