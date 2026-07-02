@@ -151,7 +151,7 @@ impl Drop for Compound {
 }
 
 impl Body<'_> {
-    pub fn create_compound(&self, compound: &Compound, def: ShapeDef) -> Shape<'_> {
+    pub fn create_compound<'a>(&'a self, compound: &'a Compound, def: ShapeDef) -> Shape<'a> {
         let mut raw_def = raw_shape_def(def);
         let raw = handle::shape(unsafe {
             sys::b3CreateCompoundShape(self.raw(), &mut raw_def, compound.raw())

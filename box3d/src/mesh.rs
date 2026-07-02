@@ -119,7 +119,7 @@ impl Drop for HeightField {
 }
 
 impl Body<'_> {
-    pub fn create_mesh(&self, mesh: &Mesh, scale: Vec3, def: ShapeDef) -> Shape<'_> {
+    pub fn create_mesh<'a>(&'a self, mesh: &'a Mesh, scale: Vec3, def: ShapeDef) -> Shape<'a> {
         let raw_def = raw_shape_def(def);
         let raw = handle::shape(unsafe {
             sys::b3CreateMeshShape(self.raw(), &raw_def, mesh.raw(), scale.into())
@@ -129,7 +129,11 @@ impl Body<'_> {
         Shape::from_raw(raw)
     }
 
-    pub fn create_height_field(&self, height_field: &HeightField, def: ShapeDef) -> Shape<'_> {
+    pub fn create_height_field<'a>(
+        &'a self,
+        height_field: &'a HeightField,
+        def: ShapeDef,
+    ) -> Shape<'a> {
         let raw_def = raw_shape_def(def);
         let raw = handle::shape(unsafe {
             sys::b3CreateHeightFieldShape(self.raw(), &raw_def, height_field.raw())
