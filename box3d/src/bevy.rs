@@ -26,15 +26,17 @@ pub const SUPPORTED_BEVY_VERSION: &str = "0.18";
 /// How the plugin advances the Box3D world.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Box3dTimestep {
-    /// Step once per Bevy update using this simulation delta.
-    Fixed(f32),
+    /// Step at a fixed simulation tick rate.
+    Fixed { ticks_per_second: f32 },
     /// Step once per Bevy update using elapsed wall time, capped by `max_delta`.
     Variable { max_delta: f32 },
 }
 
 impl Default for Box3dTimestep {
     fn default() -> Self {
-        Self::Fixed(1.0 / 60.0)
+        Self::Fixed {
+            ticks_per_second: 60.0,
+        }
     }
 }
 
@@ -44,6 +46,7 @@ pub struct Box3dConfig {
     pub gravity: Vec3,
     pub timestep: Box3dTimestep,
     pub sub_steps: i32,
+    pub max_frame_steps: u32,
     pub capacity: Capacity,
     pub sleeping_enabled: bool,
     pub continuous_enabled: bool,
@@ -55,6 +58,7 @@ impl Default for Box3dConfig {
             gravity: Vec3::new(0.0, -9.8, 0.0),
             timestep: Box3dTimestep::default(),
             sub_steps: 4,
+            max_frame_steps: 4,
             capacity: Capacity::default(),
             sleeping_enabled: true,
             continuous_enabled: true,
@@ -212,6 +216,7 @@ pub struct Box3dWorld {
     world: World,
     bodies: HashMap<Entity, sys::b3BodyId>,
     last_step: std::time::Instant,
+    accumulator: f32,
 }
 
 #[cfg(feature = "bevy")]
@@ -225,6 +230,7 @@ impl Box3dWorld {
             world,
             bodies: HashMap::new(),
             last_step: std::time::Instant::now(),
+            accumulator: 0.0,
         }
     }
 
@@ -406,24 +412,64 @@ fn step_box3d_world(
         .world
         .set_continuous_enabled(config.continuous_enabled);
 
+    let started = std::time::Instant::now();
+    let now = std::time::Instant::now();
+    let elapsed = now.duration_since(physics.last_step).as_secs_f32();
+    physics.last_step = now;
+
+    let mut step_count = 0;
     let time_step = match config.timestep {
-        Box3dTimestep::Fixed(time_step) => time_step,
+        Box3dTimestep::Fixed { ticks_per_second } => {
+            let Some(time_step) = fixed_time_step(ticks_per_second) else {
+                update_stats(&mut stats, &physics, 0, 0.0, started);
+                return;
+            };
+
+            let max_frame_steps = config.max_frame_steps;
+            if max_frame_steps == 0 {
+                update_stats(&mut stats, &physics, 0, time_step, started);
+                return;
+            }
+
+            physics.accumulator += elapsed.min(time_step * max_frame_steps as f32);
+            while physics.accumulator >= time_step && step_count < max_frame_steps {
+                physics.world.step(time_step, config.sub_steps);
+                physics.accumulator -= time_step;
+                step_count += 1;
+            }
+
+            if step_count == max_frame_steps {
+                physics.accumulator = physics.accumulator.min(time_step);
+            }
+
+            time_step
+        }
         Box3dTimestep::Variable { max_delta } => {
-            let now = std::time::Instant::now();
-            let elapsed = now.duration_since(physics.last_step).as_secs_f32();
-            physics.last_step = now;
-            elapsed.min(max_delta)
+            let time_step = elapsed.min(max_delta).max(0.0);
+            if time_step > 0.0 {
+                physics.world.step(time_step, config.sub_steps);
+                step_count = 1;
+            }
+            time_step
         }
     };
 
-    let started = std::time::Instant::now();
-    let mut step_count = 0;
+    update_stats(&mut stats, &physics, step_count, time_step, started);
+}
 
-    if time_step > 0.0 {
-        physics.world.step(time_step, config.sub_steps);
-        step_count = 1;
-    }
+#[cfg(feature = "bevy")]
+fn fixed_time_step(ticks_per_second: f32) -> Option<f32> {
+    (ticks_per_second.is_finite() && ticks_per_second > 0.0).then_some(1.0 / ticks_per_second)
+}
 
+#[cfg(feature = "bevy")]
+fn update_stats(
+    stats: &mut Box3dStats,
+    physics: &Box3dWorld,
+    step_count: u32,
+    time_step: f32,
+    started: std::time::Instant,
+) {
     stats.body_count = physics.bodies.len();
     stats.step_count = step_count;
     stats.step_ms = started.elapsed().as_secs_f64() * 1000.0;
@@ -538,7 +584,9 @@ mod tests {
         let mut app = bevy_app::App::new();
         app.add_plugins(Box3dPlugin {
             config: Box3dConfig {
-                timestep: Box3dTimestep::Fixed(1.0 / 60.0),
+                timestep: Box3dTimestep::Fixed {
+                    ticks_per_second: 60.0,
+                },
                 sub_steps: 4,
                 ..Box3dConfig::default()
             },
@@ -559,15 +607,7 @@ mod tests {
 
         let entity_ref = app.world().entity(entity);
         assert!(entity_ref.contains::<Box3dBody>());
-        assert_eq!(app.world().resource::<Box3dStats>().step_count, 1);
         assert_eq!(app.world().resource::<Box3dStats>().body_count, 1);
-        assert!(
-            entity_ref
-                .get::<bevy_transform::prelude::Transform>()
-                .unwrap()
-                .translation
-                .y
-                < 4.0
-        );
+        assert_eq!(app.world().resource::<Box3dStats>().time_step, 1.0 / 60.0);
     }
 }
