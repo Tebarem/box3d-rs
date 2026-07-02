@@ -73,6 +73,7 @@ pub struct Box3dStats {
     pub step_count: u32,
     pub step_ms: f64,
     pub time_step: f32,
+    pub interpolation_alpha: f32,
 }
 
 /// Bevy plugin for Box3D world ownership, body creation, stepping, and transform sync.
@@ -215,8 +216,17 @@ pub struct Box3dShape {
 pub struct Box3dWorld {
     world: World,
     bodies: HashMap<Entity, sys::b3BodyId>,
+    transforms: HashMap<Entity, InterpolatedTransform>,
+    interpolation_alpha: f32,
     last_step: std::time::Instant,
     accumulator: f32,
+}
+
+#[cfg(feature = "bevy")]
+#[derive(Clone, Copy, Debug)]
+struct InterpolatedTransform {
+    previous: crate::Transform,
+    current: crate::Transform,
 }
 
 #[cfg(feature = "bevy")]
@@ -229,6 +239,8 @@ impl Box3dWorld {
         Self {
             world,
             bodies: HashMap::new(),
+            transforms: HashMap::new(),
+            interpolation_alpha: 1.0,
             last_step: std::time::Instant::now(),
             accumulator: 0.0,
         }
@@ -246,6 +258,7 @@ impl Box3dWorld {
         if let Some(raw) = self.bodies.remove(&entity) {
             handle::destroy_body(raw);
         }
+        self.transforms.remove(&entity);
     }
 }
 
@@ -318,6 +331,13 @@ fn create_box3d_bodies(
 
         std::mem::forget(body);
         physics.bodies.insert(entity, raw_body);
+        physics.transforms.insert(
+            entity,
+            InterpolatedTransform {
+                previous: start,
+                current: start,
+            },
+        );
 
         let mut entity_commands = commands.entity(entity);
         entity_commands.insert(Box3dBody { id: body_id });
@@ -418,22 +438,26 @@ fn step_box3d_world(
     physics.last_step = now;
 
     let mut step_count = 0;
-    let time_step = match config.timestep {
+    let (time_step, interpolation_alpha) = match config.timestep {
         Box3dTimestep::Fixed { ticks_per_second } => {
             let Some(time_step) = fixed_time_step(ticks_per_second) else {
+                physics.interpolation_alpha = 1.0;
                 update_stats(&mut stats, &physics, 0, 0.0, started);
                 return;
             };
 
             let max_frame_steps = config.max_frame_steps;
             if max_frame_steps == 0 {
+                physics.interpolation_alpha = 1.0;
                 update_stats(&mut stats, &physics, 0, time_step, started);
                 return;
             }
 
             physics.accumulator += elapsed.min(time_step * max_frame_steps as f32);
             while physics.accumulator >= time_step && step_count < max_frame_steps {
+                store_previous_transforms(&mut physics);
                 physics.world.step(time_step, config.sub_steps);
+                store_current_transforms(&mut physics);
                 physics.accumulator -= time_step;
                 step_count += 1;
             }
@@ -442,18 +466,24 @@ fn step_box3d_world(
                 physics.accumulator = physics.accumulator.min(time_step);
             }
 
-            time_step
+            (
+                time_step,
+                interpolation_alpha(physics.accumulator, time_step),
+            )
         }
         Box3dTimestep::Variable { max_delta } => {
             let time_step = elapsed.min(max_delta).max(0.0);
             if time_step > 0.0 {
+                store_previous_transforms(&mut physics);
                 physics.world.step(time_step, config.sub_steps);
+                store_current_transforms(&mut physics);
                 step_count = 1;
             }
-            time_step
+            (time_step, 1.0)
         }
     };
 
+    physics.interpolation_alpha = interpolation_alpha;
     update_stats(&mut stats, &physics, step_count, time_step, started);
 }
 
@@ -474,6 +504,38 @@ fn update_stats(
     stats.step_count = step_count;
     stats.step_ms = started.elapsed().as_secs_f64() * 1000.0;
     stats.time_step = time_step.max(0.0);
+    stats.interpolation_alpha = physics.interpolation_alpha;
+}
+
+#[cfg(feature = "bevy")]
+fn store_previous_transforms(physics: &mut Box3dWorld) {
+    for transform in physics.transforms.values_mut() {
+        transform.previous = transform.current;
+    }
+}
+
+#[cfg(feature = "bevy")]
+fn store_current_transforms(physics: &mut Box3dWorld) {
+    let bodies: Vec<_> = physics
+        .bodies
+        .iter()
+        .map(|(entity, raw)| (*entity, *raw))
+        .collect();
+    for (entity, raw) in bodies {
+        let transform = unsafe { sys::b3Body_GetTransform(raw) }.into();
+        if let Some(entry) = physics.transforms.get_mut(&entity) {
+            entry.current = transform;
+        }
+    }
+}
+
+#[cfg(feature = "bevy")]
+fn interpolation_alpha(accumulator: f32, time_step: f32) -> f32 {
+    if time_step > 0.0 {
+        (accumulator / time_step).clamp(0.0, 1.0)
+    } else {
+        1.0
+    }
 }
 
 #[cfg(feature = "bevy")]
@@ -490,12 +552,14 @@ fn sync_box3d_to_transforms(
             continue;
         }
 
-        let Some(raw) = physics.body(entity) else {
+        let Some(interpolated) = physics.transforms.get(&entity) else {
             continue;
         };
-        let raw_transform: crate::Transform = unsafe { sys::b3Body_GetTransform(raw) }.into();
-        transform.translation = to_bevy_vec3(raw_transform.p);
-        transform.rotation = to_bevy_quat(raw_transform.q);
+
+        let alpha = physics.interpolation_alpha;
+        transform.translation = lerp_vec3(interpolated.previous.p, interpolated.current.p, alpha);
+        transform.rotation = to_bevy_quat(interpolated.previous.q)
+            .slerp(to_bevy_quat(interpolated.current.q), alpha);
     }
 }
 
@@ -552,6 +616,15 @@ fn to_bevy_vec3(value: Vec3) -> bevy_math::Vec3 {
 }
 
 #[cfg(feature = "bevy")]
+fn lerp_vec3(from: Vec3, to: Vec3, alpha: f32) -> bevy_math::Vec3 {
+    to_bevy_vec3(Vec3::new(
+        from.x + (to.x - from.x) * alpha,
+        from.y + (to.y - from.y) * alpha,
+        from.z + (to.z - from.z) * alpha,
+    ))
+}
+
+#[cfg(feature = "bevy")]
 fn to_bevy_quat(value: Quat) -> bevy_math::Quat {
     bevy_math::Quat::from_xyzw(value.v.x, value.v.y, value.v.z, value.s)
 }
@@ -576,6 +649,14 @@ mod tests {
 
         assert_eq!(collider.def.density, 2.0);
         assert_eq!(collider.def.friction, 0.8);
+    }
+
+    #[cfg(feature = "bevy")]
+    #[test]
+    fn interpolation_alpha_tracks_fixed_step_remainder() {
+        assert!((interpolation_alpha(0.025, 0.05) - 0.5).abs() < f32::EPSILON);
+        assert_eq!(interpolation_alpha(0.1, 0.05), 1.0);
+        assert_eq!(interpolation_alpha(0.025, 0.0), 1.0);
     }
 
     #[cfg(feature = "bevy")]
