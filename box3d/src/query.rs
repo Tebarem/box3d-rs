@@ -1,8 +1,18 @@
-use std::ptr;
+use std::{
+    any::Any,
+    ffi::c_void,
+    marker::PhantomData,
+    panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
+    ptr, slice,
+};
 
 use box3d_sys as sys;
 
-use crate::{math::Vec3, world::World};
+use crate::{
+    handle,
+    math::{Aabb, Vec3},
+    world::World,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QueryFilter {
@@ -50,6 +60,155 @@ pub struct RayHit {
     pub leaf_visits: i32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QueryStats {
+    pub node_visits: i32,
+    pub leaf_visits: i32,
+}
+
+impl From<sys::b3TreeStats> for QueryStats {
+    fn from(value: sys::b3TreeStats) -> Self {
+        Self {
+            node_visits: value.nodeVisits,
+            leaf_visits: value.leafVisits,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ShapeRef<'a> {
+    raw: sys::b3ShapeId,
+    _marker: PhantomData<&'a mut ()>,
+}
+
+impl ShapeRef<'_> {
+    fn from_raw(raw: sys::b3ShapeId) -> Self {
+        Self {
+            raw,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn is_valid(self) -> bool {
+        handle::is_shape_valid(self.raw)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Plane {
+    pub normal: Vec3,
+    pub offset: f32,
+}
+
+impl From<sys::b3Plane> for Plane {
+    fn from(value: sys::b3Plane) -> Self {
+        Self {
+            normal: value.normal.into(),
+            offset: value.offset,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MoverPlane {
+    pub plane: Plane,
+    pub point: Vec3,
+}
+
+impl From<sys::b3PlaneResult> for MoverPlane {
+    fn from(value: sys::b3PlaneResult) -> Self {
+        Self {
+            plane: value.plane.into(),
+            point: value.point.into(),
+        }
+    }
+}
+
+type CallbackPanic = Box<dyn Any + Send + 'static>;
+
+struct ShapeCallbackContext<'a, F> {
+    f: &'a mut F,
+    panic: Option<CallbackPanic>,
+}
+
+unsafe extern "C" fn shape_callback<F>(shape_id: sys::b3ShapeId, context: *mut c_void) -> bool
+where
+    F: for<'shape> FnMut(ShapeRef<'shape>) -> bool,
+{
+    let context = unsafe { &mut *context.cast::<ShapeCallbackContext<'_, F>>() };
+    if context.panic.is_some() {
+        return false;
+    }
+
+    match catch_unwind(AssertUnwindSafe(|| {
+        (context.f)(ShapeRef::from_raw(shape_id))
+    })) {
+        Ok(keep_going) => keep_going,
+        Err(panic) => {
+            context.panic = Some(panic);
+            false
+        }
+    }
+}
+
+struct MoverPlaneContext<'a, F> {
+    f: &'a mut F,
+    panic: Option<CallbackPanic>,
+}
+
+unsafe extern "C" fn mover_plane_callback<F>(
+    shape_id: sys::b3ShapeId,
+    planes: *const sys::b3PlaneResult,
+    plane_count: i32,
+    context: *mut c_void,
+) -> bool
+where
+    F: for<'shape> FnMut(ShapeRef<'shape>, MoverPlane) -> bool,
+{
+    if plane_count <= 0 {
+        return true;
+    }
+
+    if planes.is_null() {
+        return false;
+    }
+
+    let context = unsafe { &mut *context.cast::<MoverPlaneContext<'_, F>>() };
+    if context.panic.is_some() {
+        return false;
+    }
+
+    for plane in unsafe { slice::from_raw_parts(planes, plane_count as usize) } {
+        match catch_unwind(AssertUnwindSafe(|| {
+            (context.f)(ShapeRef::from_raw(shape_id), (*plane).into())
+        })) {
+            Ok(true) => {}
+            Ok(false) => return false,
+            Err(panic) => {
+                context.panic = Some(panic);
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+fn resume_callback_panic(panic: Option<CallbackPanic>) {
+    if let Some(panic) = panic {
+        resume_unwind(panic);
+    }
+}
+
+fn raw_mover(points: [Vec3; 2], radius: f32) -> sys::b3Capsule {
+    assert!(radius > 0.0);
+    sys::b3Capsule {
+        center1: points[0].into(),
+        center2: points[1].into(),
+        radius,
+    }
+}
+
 impl RayHit {
     fn from_raw(value: sys::b3RayResult) -> Option<Self> {
         value.hit.then(|| Self {
@@ -66,6 +225,27 @@ impl RayHit {
 }
 
 impl World {
+    pub fn overlap_aabb<F>(&self, aabb: Aabb, filter: QueryFilter, mut f: F) -> QueryStats
+    where
+        F: for<'shape> FnMut(ShapeRef<'shape>) -> bool,
+    {
+        let mut context = ShapeCallbackContext {
+            f: &mut f,
+            panic: None,
+        };
+        let stats = unsafe {
+            sys::b3World_OverlapAABB(
+                self.raw(),
+                aabb.into(),
+                filter.into(),
+                Some(shape_callback::<F>),
+                (&mut context as *mut ShapeCallbackContext<'_, F>).cast(),
+            )
+        };
+        resume_callback_panic(context.panic.take());
+        stats.into()
+    }
+
     pub fn cast_ray_closest(
         &self,
         origin: Vec3,
@@ -81,6 +261,88 @@ impl World {
             )
         };
         RayHit::from_raw(hit)
+    }
+
+    pub fn cast_mover(
+        &self,
+        origin: Vec3,
+        points: [Vec3; 2],
+        radius: f32,
+        translation: Vec3,
+        filter: QueryFilter,
+    ) -> f32 {
+        let mover = raw_mover(points, radius);
+        unsafe {
+            sys::b3World_CastMover(
+                self.raw(),
+                origin.into(),
+                &mover,
+                translation.into(),
+                filter.into(),
+                None,
+                ptr::null_mut(),
+            )
+        }
+    }
+
+    pub fn cast_mover_filtered<F>(
+        &self,
+        origin: Vec3,
+        points: [Vec3; 2],
+        radius: f32,
+        translation: Vec3,
+        filter: QueryFilter,
+        mut f: F,
+    ) -> f32
+    where
+        F: for<'shape> FnMut(ShapeRef<'shape>) -> bool,
+    {
+        let mover = raw_mover(points, radius);
+        let mut context = ShapeCallbackContext {
+            f: &mut f,
+            panic: None,
+        };
+        let fraction = unsafe {
+            sys::b3World_CastMover(
+                self.raw(),
+                origin.into(),
+                &mover,
+                translation.into(),
+                filter.into(),
+                Some(shape_callback::<F>),
+                (&mut context as *mut ShapeCallbackContext<'_, F>).cast(),
+            )
+        };
+        resume_callback_panic(context.panic.take());
+        fraction
+    }
+
+    pub fn collide_mover<F>(
+        &self,
+        origin: Vec3,
+        points: [Vec3; 2],
+        radius: f32,
+        filter: QueryFilter,
+        mut f: F,
+    ) where
+        F: for<'shape> FnMut(ShapeRef<'shape>, MoverPlane) -> bool,
+    {
+        let mover = raw_mover(points, radius);
+        let mut context = MoverPlaneContext {
+            f: &mut f,
+            panic: None,
+        };
+        unsafe {
+            sys::b3World_CollideMover(
+                self.raw(),
+                origin.into(),
+                &mover,
+                filter.into(),
+                Some(mover_plane_callback::<F>),
+                (&mut context as *mut MoverPlaneContext<'_, F>).cast(),
+            )
+        };
+        resume_callback_panic(context.panic.take());
     }
 }
 
@@ -119,5 +381,73 @@ mod tests {
         );
 
         assert!(hit.is_none());
+    }
+
+    #[test]
+    fn overlap_aabb_reports_shapes_in_bounds() {
+        let world = World::new(Vec3::ZERO);
+        let body = world.create_body(BodyDef::static_at(Vec3::ZERO));
+        let _shape = body.create_box(Vec3::new(0.5, 0.5, 0.5), ShapeDef::default());
+        let other = world.create_body(BodyDef::static_at(Vec3::new(5.0, 0.0, 0.0)));
+        let _other_shape = other.create_box(Vec3::new(0.5, 0.5, 0.5), ShapeDef::default());
+
+        let mut count = 0;
+        let stats = world.overlap_aabb(
+            Aabb {
+                lower_bound: Vec3::new(-1.0, -1.0, -1.0),
+                upper_bound: Vec3::new(1.0, 1.0, 1.0),
+            },
+            QueryFilter::default(),
+            |shape| {
+                assert!(shape.is_valid());
+                count += 1;
+                true
+            },
+        );
+
+        assert_eq!(count, 1);
+        assert!(stats.leaf_visits >= 1, "{stats:?}");
+    }
+
+    #[test]
+    fn cast_mover_hits_static_wall() {
+        let world = World::new(Vec3::ZERO);
+        let wall = world.create_body(BodyDef::static_at(Vec3::new(2.0, 0.0, 0.0)));
+        let _wall_shape = wall.create_box(Vec3::new(0.5, 2.0, 2.0), ShapeDef::default());
+
+        let fraction = world.cast_mover(
+            Vec3::ZERO,
+            [Vec3::new(0.0, -0.5, 0.0), Vec3::new(0.0, 0.5, 0.0)],
+            0.25,
+            Vec3::new(4.0, 0.0, 0.0),
+            QueryFilter::default(),
+        );
+
+        assert!(fraction > 0.0 && fraction < 1.0, "{fraction}");
+    }
+
+    #[test]
+    fn collide_mover_reports_planes() {
+        let world = World::new(Vec3::ZERO);
+        let wall = world.create_body(BodyDef::static_at(Vec3::ZERO));
+        let _wall_shape = wall.create_box(Vec3::new(0.5, 0.5, 0.5), ShapeDef::default());
+
+        let mut count = 0;
+        let mut saw_top_face = false;
+        world.collide_mover(
+            Vec3::ZERO,
+            [Vec3::new(-0.3, 0.6, 0.0), Vec3::new(0.3, 0.6, 0.0)],
+            0.2,
+            QueryFilter::default(),
+            |shape, plane| {
+                assert!(shape.is_valid());
+                count += 1;
+                saw_top_face |= plane.plane.normal.y > 0.9;
+                true
+            },
+        );
+
+        assert!(count >= 1);
+        assert!(saw_top_face);
     }
 }
