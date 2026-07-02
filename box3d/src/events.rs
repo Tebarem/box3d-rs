@@ -9,15 +9,79 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug)]
+pub struct WorldId {
+    raw: sys::b3WorldId,
+}
+
+impl WorldId {
+    pub(crate) fn from_raw(raw: sys::b3WorldId) -> Self {
+        Self { raw }
+    }
+
+    pub const fn to_bits(self) -> u32 {
+        ((self.raw.index1 as u32) << 16) | self.raw.generation as u32
+    }
+
+    pub const fn from_bits(bits: u32) -> Self {
+        Self {
+            raw: sys::b3WorldId {
+                index1: (bits >> 16) as u16,
+                generation: bits as u16,
+            },
+        }
+    }
+
+    pub fn is_valid(self) -> bool {
+        handle::is_world_valid(self.raw)
+    }
+}
+
+impl PartialEq for WorldId {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_bits() == other.to_bits()
+    }
+}
+
+impl Eq for WorldId {}
+
+#[derive(Clone, Copy, Debug)]
 pub struct BodyId {
     raw: sys::b3BodyId,
 }
 
 impl BodyId {
+    pub(crate) fn from_raw(raw: sys::b3BodyId) -> Self {
+        Self { raw }
+    }
+
+    pub const fn to_bits(self) -> u64 {
+        ((self.raw.index1 as u64) << 32)
+            | ((self.raw.world0 as u64) << 16)
+            | self.raw.generation as u64
+    }
+
+    pub const fn from_bits(bits: u64) -> Self {
+        Self {
+            raw: sys::b3BodyId {
+                index1: (bits >> 32) as i32,
+                world0: (bits >> 16) as u16,
+                generation: bits as u16,
+            },
+        }
+    }
+
     pub fn is_valid(self) -> bool {
         handle::is_body_valid(self.raw)
     }
 }
+
+impl PartialEq for BodyId {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_bits() == other.to_bits()
+    }
+}
+
+impl Eq for BodyId {}
 
 #[derive(Clone, Copy, Debug)]
 pub struct ShapeId {
@@ -29,10 +93,34 @@ impl ShapeId {
         Self { raw }
     }
 
+    pub const fn to_bits(self) -> u64 {
+        ((self.raw.index1 as u64) << 32)
+            | ((self.raw.world0 as u64) << 16)
+            | self.raw.generation as u64
+    }
+
+    pub const fn from_bits(bits: u64) -> Self {
+        Self {
+            raw: sys::b3ShapeId {
+                index1: (bits >> 32) as i32,
+                world0: (bits >> 16) as u16,
+                generation: bits as u16,
+            },
+        }
+    }
+
     pub fn is_valid(self) -> bool {
         handle::is_shape_valid(self.raw)
     }
 }
+
+impl PartialEq for ShapeId {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_bits() == other.to_bits()
+    }
+}
+
+impl Eq for ShapeId {}
 
 #[derive(Clone, Copy, Debug)]
 pub struct ContactId {
@@ -40,10 +128,41 @@ pub struct ContactId {
 }
 
 impl ContactId {
+    pub(crate) fn from_raw(raw: sys::b3ContactId) -> Self {
+        Self { raw }
+    }
+
+    pub const fn to_bits(self) -> [u32; 3] {
+        [
+            self.raw.index1 as u32,
+            self.raw.world0 as u32,
+            self.raw.generation,
+        ]
+    }
+
+    pub const fn from_bits(bits: [u32; 3]) -> Self {
+        Self {
+            raw: sys::b3ContactId {
+                index1: bits[0] as i32,
+                world0: bits[1] as u16,
+                padding: 0,
+                generation: bits[2],
+            },
+        }
+    }
+
     pub fn is_valid(self) -> bool {
         handle::is_contact_valid(self.raw)
     }
 }
+
+impl PartialEq for ContactId {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_bits() == other.to_bits()
+    }
+}
+
+impl Eq for ContactId {}
 
 #[derive(Clone, Copy, Debug)]
 pub struct JointId {
@@ -51,10 +170,38 @@ pub struct JointId {
 }
 
 impl JointId {
+    pub(crate) fn from_raw(raw: sys::b3JointId) -> Self {
+        Self { raw }
+    }
+
+    pub const fn to_bits(self) -> u64 {
+        ((self.raw.index1 as u64) << 32)
+            | ((self.raw.world0 as u64) << 16)
+            | self.raw.generation as u64
+    }
+
+    pub const fn from_bits(bits: u64) -> Self {
+        Self {
+            raw: sys::b3JointId {
+                index1: (bits >> 32) as i32,
+                world0: (bits >> 16) as u16,
+                generation: bits as u16,
+            },
+        }
+    }
+
     pub fn is_valid(self) -> bool {
         handle::is_joint_valid(self.raw)
     }
 }
+
+impl PartialEq for JointId {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_bits() == other.to_bits()
+    }
+}
+
+impl Eq for JointId {}
 
 pub struct BodyEvents<'world> {
     raw: sys::b3BodyEvents,
@@ -73,7 +220,7 @@ impl BodyEvents<'_> {
         events(self.raw.moveEvents, self.raw.moveCount)
             .iter()
             .map(|event| BodyMoveEvent {
-                body: BodyId { raw: event.bodyId },
+                body: BodyId::from_raw(event.bodyId),
                 transform: event.transform.into(),
                 fell_asleep: event.fellAsleep,
             })
@@ -146,15 +293,9 @@ impl ContactEvents<'_> {
         events(self.raw.hitEvents, self.raw.hitCount)
             .iter()
             .map(|event| ContactHitEvent {
-                shape_a: ShapeId {
-                    raw: event.shapeIdA,
-                },
-                shape_b: ShapeId {
-                    raw: event.shapeIdB,
-                },
-                contact: ContactId {
-                    raw: event.contactId,
-                },
+                shape_a: ShapeId::from_raw(event.shapeIdA),
+                shape_b: ShapeId::from_raw(event.shapeIdB),
+                contact: ContactId::from_raw(event.contactId),
                 point: event.point.into(),
                 normal: event.normal.into(),
                 approach_speed: event.approachSpeed,
@@ -179,12 +320,16 @@ impl JointEvents<'_> {
         events(self.raw.jointEvents, self.raw.count)
             .iter()
             .map(|event| JointEvent {
-                joint: JointId { raw: event.jointId },
+                joint: JointId::from_raw(event.jointId),
             })
     }
 }
 
 impl World {
+    pub fn id(&self) -> WorldId {
+        WorldId::from_raw(self.raw())
+    }
+
     pub fn body_events(&self) -> BodyEvents<'_> {
         BodyEvents {
             raw: unsafe { sys::b3World_GetBodyEvents(self.raw()) },
@@ -224,12 +369,8 @@ fn events<'a, T>(events: *const T, count: i32) -> &'a [T] {
 
 fn sensor_event<T: SensorTouch>(event: &T) -> SensorTouchEvent {
     SensorTouchEvent {
-        sensor: ShapeId {
-            raw: event.sensor(),
-        },
-        visitor: ShapeId {
-            raw: event.visitor(),
-        },
+        sensor: ShapeId::from_raw(event.sensor()),
+        visitor: ShapeId::from_raw(event.visitor()),
     }
 }
 
@@ -260,29 +401,17 @@ impl SensorTouch for sys::b3SensorEndTouchEvent {
 
 fn contact_begin_event(event: &sys::b3ContactBeginTouchEvent) -> ContactTouchEvent {
     ContactTouchEvent {
-        shape_a: ShapeId {
-            raw: event.shapeIdA,
-        },
-        shape_b: ShapeId {
-            raw: event.shapeIdB,
-        },
-        contact: ContactId {
-            raw: event.contactId,
-        },
+        shape_a: ShapeId::from_raw(event.shapeIdA),
+        shape_b: ShapeId::from_raw(event.shapeIdB),
+        contact: ContactId::from_raw(event.contactId),
     }
 }
 
 fn contact_end_event(event: &sys::b3ContactEndTouchEvent) -> ContactTouchEvent {
     ContactTouchEvent {
-        shape_a: ShapeId {
-            raw: event.shapeIdA,
-        },
-        shape_b: ShapeId {
-            raw: event.shapeIdB,
-        },
-        contact: ContactId {
-            raw: event.contactId,
-        },
+        shape_a: ShapeId::from_raw(event.shapeIdA),
+        shape_b: ShapeId::from_raw(event.shapeIdB),
+        contact: ContactId::from_raw(event.contactId),
     }
 }
 
@@ -290,6 +419,43 @@ fn contact_end_event(event: &sys::b3ContactEndTouchEvent) -> ContactTouchEvent {
 mod tests {
     use super::*;
     use crate::{BodyDef, ShapeDef};
+
+    #[test]
+    fn ids_round_trip_through_stable_bits() {
+        let world_bits = 0x0012_0034;
+        let body_bits = 0x0000_0042_0007_0011;
+        let shape_bits = 0x0000_0043_0007_0012;
+        let joint_bits = 0x0000_0044_0007_0013;
+        let contact_bits = [42, 7, 99];
+
+        let world = WorldId::from_bits(world_bits);
+        assert_eq!(world.to_bits(), world_bits);
+        assert_eq!(WorldId::from_bits(world.to_bits()), world);
+
+        let body = BodyId::from_bits(body_bits);
+        assert_eq!(body.to_bits(), body_bits);
+        assert_eq!(BodyId::from_bits(body.to_bits()), body);
+
+        let shape = ShapeId::from_bits(shape_bits);
+        assert_eq!(shape.to_bits(), shape_bits);
+        assert_eq!(ShapeId::from_bits(shape.to_bits()), shape);
+
+        let joint = JointId::from_bits(joint_bits);
+        assert_eq!(joint.to_bits(), joint_bits);
+        assert_eq!(JointId::from_bits(joint.to_bits()), joint);
+
+        let contact = ContactId::from_bits(contact_bits);
+        assert_eq!(contact.to_bits(), contact_bits);
+        assert_eq!(ContactId::from_bits(contact.to_bits()), contact);
+    }
+
+    #[test]
+    fn world_id_reports_valid_world() {
+        let world = World::default();
+        let id = world.id();
+        assert!(id.is_valid());
+        assert_eq!(WorldId::from_bits(id.to_bits()), id);
+    }
 
     #[test]
     fn body_events_report_moving_dynamic_body() {

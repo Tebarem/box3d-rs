@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+mod base;
 mod body;
 mod callbacks;
 mod character;
@@ -19,6 +20,11 @@ mod shape;
 mod tasks;
 mod world;
 
+pub use base::{
+    byte_count, hash, is_double_precision, length_units_per_meter, milliseconds,
+    milliseconds_and_reset, set_length_units_per_meter, set_stall_threshold, sleep,
+    stall_threshold, ticks, version, yield_now, Version, HASH_INIT,
+};
 pub use body::{Body, BodyDef, BodyType};
 pub use callbacks::PreSolveContact;
 pub use character::{clip_vector, solve_planes, CollisionPlane, MoverCapsule};
@@ -32,6 +38,7 @@ pub use error::{Error, Result};
 pub use events::{
     BodyEvents, BodyId, BodyMoveEvent, ContactEvents, ContactHitEvent, ContactId,
     ContactTouchEvent, JointEvent, JointEvents, JointId, SensorEvents, SensorTouchEvent, ShapeId,
+    WorldId,
 };
 pub use hull::{BoxHull, Hull, HullRef};
 pub use joint::{
