@@ -72,6 +72,7 @@ impl Drop for Hull {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum HullRef<'a> {
     Box(&'a BoxHull),
     Custom(&'a Hull),
@@ -90,7 +91,7 @@ impl<'a> From<&'a Hull> for HullRef<'a> {
 }
 
 impl HullRef<'_> {
-    fn raw(self) -> *const sys::b3HullData {
+    pub(crate) fn raw(self) -> *const sys::b3HullData {
         match self {
             Self::Box(hull) => &hull.raw.base,
             Self::Custom(hull) => hull.raw.as_ptr(),

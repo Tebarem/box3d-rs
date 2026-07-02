@@ -1,4 +1,5 @@
 mod body;
+mod compound;
 mod error;
 mod handle;
 mod hull;
@@ -9,6 +10,7 @@ mod shape;
 mod world;
 
 pub use body::{Body, BodyDef, BodyType};
+pub use compound::{Compound, CompoundPart};
 pub use error::{Error, Result};
 pub use hull::{BoxHull, Hull, HullRef};
 pub use math::{Aabb, Filter, MassData, Matrix3, Quat, SurfaceMaterial, Transform, Vec3};
