@@ -1,6 +1,15 @@
+use std::sync::Mutex;
+
 use box3d_sys as sys;
 
 use crate::{Error, Result};
+
+static WORLD_ALLOC: Mutex<()> = Mutex::new(());
+
+pub(crate) fn create_world(def: &sys::b3WorldDef) -> Result<sys::b3WorldId> {
+    let _guard = WORLD_ALLOC.lock().expect("box3d world mutex poisoned");
+    world(unsafe { sys::b3CreateWorld(def) })
+}
 
 pub(crate) fn world(raw: sys::b3WorldId) -> Result<sys::b3WorldId> {
     if is_world_valid(raw) {
@@ -51,6 +60,13 @@ pub(crate) fn is_contact_valid(raw: sys::b3ContactId) -> bool {
 pub(crate) fn destroy_body(raw: sys::b3BodyId) {
     if is_body_valid(raw) {
         unsafe { sys::b3DestroyBody(raw) };
+    }
+}
+
+pub(crate) fn destroy_world(raw: sys::b3WorldId) {
+    let _guard = WORLD_ALLOC.lock().expect("box3d world mutex poisoned");
+    if is_world_valid(raw) {
+        unsafe { sys::b3DestroyWorld(raw) };
     }
 }
 

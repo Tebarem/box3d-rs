@@ -9,7 +9,7 @@ pub use body::{Body, BodyDef, BodyType};
 pub use error::{Error, Result};
 pub use math::{Aabb, Filter, MassData, Matrix3, Quat, SurfaceMaterial, Transform, Vec3};
 pub use shape::{Shape, ShapeDef};
-pub use world::World;
+pub use world::{Counters, Profile, World};
 
 #[cfg(test)]
 mod tests {
