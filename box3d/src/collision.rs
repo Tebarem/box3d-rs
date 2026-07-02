@@ -25,7 +25,7 @@ impl Sphere {
         compute_sphere_mass(self, density)
     }
 
-    fn raw(self) -> sys::b3Sphere {
+    pub(crate) fn raw(self) -> sys::b3Sphere {
         assert!(self.radius > 0.0);
         sys::b3Sphere {
             center: self.center.into(),
@@ -59,7 +59,7 @@ impl Capsule {
         compute_capsule_mass(self, density)
     }
 
-    fn raw(self) -> sys::b3Capsule {
+    pub(crate) fn raw(self) -> sys::b3Capsule {
         assert!(self.radius > 0.0);
         sys::b3Capsule {
             center1: self.point1.into(),
@@ -137,7 +137,7 @@ pub struct ShapeCastOutput {
 }
 
 impl ShapeCastOutput {
-    fn from_raw(value: sys::b3CastOutput) -> Option<Self> {
+    pub(crate) fn from_raw(value: sys::b3CastOutput) -> Option<Self> {
         value.hit.then(|| Self {
             normal: value.normal.into(),
             point: value.point.into(),
@@ -147,6 +147,25 @@ impl ShapeCastOutput {
             child_index: value.childIndex,
             material_index: value.materialIndex,
         })
+    }
+}
+
+impl From<sys::b3Sphere> for Sphere {
+    fn from(value: sys::b3Sphere) -> Self {
+        Self {
+            center: value.center.into(),
+            radius: value.radius,
+        }
+    }
+}
+
+impl From<sys::b3Capsule> for Capsule {
+    fn from(value: sys::b3Capsule) -> Self {
+        Self {
+            point1: value.center1.into(),
+            point2: value.center2.into(),
+            radius: value.radius,
+        }
     }
 }
 

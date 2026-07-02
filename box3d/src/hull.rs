@@ -109,12 +109,46 @@ impl Body<'_> {
 
         Shape::from_raw(raw)
     }
+
+    pub fn create_transformed_hull<'a>(
+        &self,
+        hull: impl Into<HullRef<'a>>,
+        transform: Transform,
+        scale: Vec3,
+        def: ShapeDef,
+    ) -> Shape<'_> {
+        assert_valid_transform(transform);
+        assert_valid_vec3(scale);
+        let raw_def = raw_shape_def(def);
+        let raw = handle::shape(unsafe {
+            sys::b3CreateTransformedHullShape(
+                self.raw(),
+                &raw_def,
+                hull.into().raw(),
+                transform.into(),
+                scale.into(),
+            )
+        })
+        .expect("box3d returned an invalid shape");
+
+        Shape::from_raw(raw)
+    }
+}
+
+fn assert_valid_transform(transform: Transform) {
+    assert_valid_vec3(transform.p);
+    assert_valid_vec3(transform.q.v);
+    assert!(transform.q.s.is_finite());
+}
+
+fn assert_valid_vec3(value: Vec3) {
+    assert!(value.x.is_finite() && value.y.is_finite() && value.z.is_finite());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BodyDef, World};
+    use crate::{BodyDef, Quat, ShapeType, World};
 
     #[test]
     fn custom_cube_hull_steps() {
@@ -148,5 +182,25 @@ mod tests {
 
         assert!(shape.is_valid());
         assert!(body.position().y.is_finite());
+    }
+
+    #[test]
+    fn transformed_hull_creation_bakes_geometry() {
+        let world = World::new(Vec3::ZERO);
+        let hull = BoxHull::new(Vec3::new(0.5, 0.25, 0.5));
+        let body = world.create_body(BodyDef::dynamic_at(Vec3::ZERO));
+        let shape = body.create_transformed_hull(
+            &hull,
+            Transform::new(Vec3::new(0.1, 0.0, 0.0), Quat::IDENTITY),
+            Vec3::new(-1.0, 1.0, 1.0),
+            ShapeDef {
+                density: 1.0,
+                friction: 0.3,
+                ..ShapeDef::default()
+            },
+        );
+
+        assert!(shape.is_valid());
+        assert_eq!(shape.shape_type(), ShapeType::Hull);
     }
 }
