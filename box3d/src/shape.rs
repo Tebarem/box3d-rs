@@ -2,7 +2,35 @@ use std::marker::PhantomData;
 
 use box3d_sys as sys;
 
-use crate::{body::Body, handle, math::Vec3};
+use crate::{
+    body::Body,
+    handle,
+    math::{Aabb, Filter, Vec3},
+};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShapeType {
+    Capsule,
+    Compound,
+    HeightField,
+    Hull,
+    Mesh,
+    Sphere,
+}
+
+impl From<sys::b3ShapeType> for ShapeType {
+    fn from(value: sys::b3ShapeType) -> Self {
+        match value {
+            sys::b3ShapeType_b3_capsuleShape => Self::Capsule,
+            sys::b3ShapeType_b3_compoundShape => Self::Compound,
+            sys::b3ShapeType_b3_heightShape => Self::HeightField,
+            sys::b3ShapeType_b3_hullShape => Self::Hull,
+            sys::b3ShapeType_b3_meshShape => Self::Mesh,
+            sys::b3ShapeType_b3_sphereShape => Self::Sphere,
+            _ => panic!("unknown box3d shape type {value}"),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct ShapeDef {
@@ -34,6 +62,86 @@ impl<'body> Shape<'body> {
 
     pub fn is_valid(&self) -> bool {
         handle::is_shape_valid(self.raw)
+    }
+
+    pub fn shape_type(&self) -> ShapeType {
+        unsafe { sys::b3Shape_GetType(self.raw) }.into()
+    }
+
+    pub fn aabb(&self) -> Aabb {
+        unsafe { sys::b3Shape_GetAABB(self.raw) }.into()
+    }
+
+    pub fn closest_point(&self, target: Vec3) -> Vec3 {
+        unsafe { sys::b3Shape_GetClosestPoint(self.raw, target.into()) }.into()
+    }
+
+    pub fn density(&self) -> f32 {
+        unsafe { sys::b3Shape_GetDensity(self.raw) }
+    }
+
+    pub fn set_density(&self, density: f32, update_body_mass: bool) {
+        unsafe { sys::b3Shape_SetDensity(self.raw, density, update_body_mass) };
+    }
+
+    pub fn friction(&self) -> f32 {
+        unsafe { sys::b3Shape_GetFriction(self.raw) }
+    }
+
+    pub fn set_friction(&self, friction: f32) {
+        unsafe { sys::b3Shape_SetFriction(self.raw, friction) };
+    }
+
+    pub fn restitution(&self) -> f32 {
+        unsafe { sys::b3Shape_GetRestitution(self.raw) }
+    }
+
+    pub fn set_restitution(&self, restitution: f32) {
+        unsafe { sys::b3Shape_SetRestitution(self.raw, restitution) };
+    }
+
+    pub fn filter(&self) -> Filter {
+        unsafe { sys::b3Shape_GetFilter(self.raw) }.into()
+    }
+
+    pub fn set_filter(&self, filter: Filter) {
+        self.set_filter_with_contact_update(filter, false);
+    }
+
+    pub fn set_filter_with_contact_update(&self, filter: Filter, invoke_contacts: bool) {
+        unsafe { sys::b3Shape_SetFilter(self.raw, filter.into(), invoke_contacts) };
+    }
+
+    pub fn enable_sensor_events(&self, enabled: bool) {
+        unsafe { sys::b3Shape_EnableSensorEvents(self.raw, enabled) };
+    }
+
+    pub fn are_sensor_events_enabled(&self) -> bool {
+        unsafe { sys::b3Shape_AreSensorEventsEnabled(self.raw) }
+    }
+
+    pub fn enable_contact_events(&self, enabled: bool) {
+        unsafe { sys::b3Shape_EnableContactEvents(self.raw, enabled) };
+    }
+
+    pub fn are_contact_events_enabled(&self) -> bool {
+        unsafe { sys::b3Shape_AreContactEventsEnabled(self.raw) }
+    }
+
+    pub fn enable_hit_events(&self, enabled: bool) {
+        unsafe { sys::b3Shape_EnableHitEvents(self.raw, enabled) };
+    }
+
+    pub fn are_hit_events_enabled(&self) -> bool {
+        unsafe { sys::b3Shape_AreHitEventsEnabled(self.raw) }
+    }
+
+    pub fn enable_pre_solve_events(&self, enabled: bool) {
+        unsafe { sys::b3Shape_EnablePreSolveEvents(self.raw, enabled) };
+    }
+
+    pub fn are_pre_solve_events_enabled(&self) -> bool {
+        unsafe { sys::b3Shape_ArePreSolveEventsEnabled(self.raw) }
     }
 }
 
@@ -124,5 +232,48 @@ mod tests {
         assert!(capsule_shape.is_valid());
         assert!(sphere.position().y.is_finite());
         assert!(capsule.position().y.is_finite());
+    }
+
+    #[test]
+    fn runtime_properties_round_trip() {
+        let world = World::new(Vec3::ZERO);
+        let body = world.create_body(BodyDef::dynamic_at(Vec3::ZERO));
+        let shape = body.create_sphere(
+            Vec3::ZERO,
+            0.5,
+            ShapeDef {
+                density: 1.0,
+                friction: 0.3,
+            },
+        );
+
+        assert_eq!(shape.shape_type(), ShapeType::Sphere);
+        let aabb = shape.aabb();
+        assert!(aabb.lower_bound.x <= -0.5 && aabb.upper_bound.x >= 0.5);
+        assert!((shape.closest_point(Vec3::new(2.0, 0.0, 0.0)).x - 0.5).abs() < 1e-6);
+
+        shape.set_density(2.0, true);
+        shape.set_friction(0.4);
+        shape.set_restitution(0.25);
+        assert_eq!(shape.density(), 2.0);
+        assert_eq!(shape.friction(), 0.4);
+        assert_eq!(shape.restitution(), 0.25);
+
+        let filter = Filter {
+            category_bits: 0x2,
+            mask_bits: 0x4,
+            group_index: -3,
+        };
+        shape.set_filter(filter);
+        assert_eq!(shape.filter(), filter);
+
+        shape.enable_sensor_events(true);
+        shape.enable_contact_events(true);
+        shape.enable_hit_events(true);
+        shape.enable_pre_solve_events(true);
+        assert!(shape.are_sensor_events_enabled());
+        assert!(shape.are_contact_events_enabled());
+        assert!(shape.are_hit_events_enabled());
+        assert!(shape.are_pre_solve_events_enabled());
     }
 }
