@@ -317,6 +317,7 @@ pub struct JointEvents<'world> {
 #[derive(Clone, Copy, Debug)]
 pub struct JointEvent {
     pub joint: JointId,
+    pub user_data: usize,
 }
 
 impl JointEvents<'_> {
@@ -325,6 +326,7 @@ impl JointEvents<'_> {
             .iter()
             .map(|event| JointEvent {
                 joint: JointId::from_raw(event.jointId),
+                user_data: event.userData as usize,
             })
     }
 }

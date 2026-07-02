@@ -1,9 +1,10 @@
-use std::{marker::PhantomData, ops::Deref};
+use std::{ffi::c_void, marker::PhantomData, ops::Deref};
 
 use box3d_sys as sys;
 
 use crate::{
     body::Body,
+    events::{BodyId, JointId, WorldId},
     handle,
     math::{Quat, Transform, Vec3},
     world::World,
@@ -536,6 +537,10 @@ impl<'world> Joint<'world> {
         self.raw
     }
 
+    pub fn id(&self) -> JointId {
+        JointId::from_raw(self.raw)
+    }
+
     pub fn destroy(self) {
         drop(self);
     }
@@ -546,6 +551,18 @@ impl<'world> Joint<'world> {
 
     pub fn joint_type(&self) -> JointType {
         unsafe { sys::b3Joint_GetType(self.raw) }.into()
+    }
+
+    pub fn body_a_id(&self) -> BodyId {
+        BodyId::from_raw(unsafe { sys::b3Joint_GetBodyA(self.raw) })
+    }
+
+    pub fn body_b_id(&self) -> BodyId {
+        BodyId::from_raw(unsafe { sys::b3Joint_GetBodyB(self.raw) })
+    }
+
+    pub fn world_id(&self) -> WorldId {
+        WorldId::from_raw(unsafe { sys::b3Joint_GetWorld(self.raw) })
     }
 
     pub fn set_local_frame_a(&self, frame: Transform) {
@@ -570,6 +587,14 @@ impl<'world> Joint<'world> {
 
     pub fn collide_connected(&self) -> bool {
         unsafe { sys::b3Joint_GetCollideConnected(self.raw) }
+    }
+
+    pub fn set_user_data(&self, user_data: usize) {
+        unsafe { sys::b3Joint_SetUserData(self.raw, user_data as *mut c_void) };
+    }
+
+    pub fn user_data(&self) -> usize {
+        unsafe { sys::b3Joint_GetUserData(self.raw) as usize }
     }
 
     pub fn wake_bodies(&self) {
@@ -1602,5 +1627,30 @@ mod tests {
             assert_eq!(joint.joint_type(), JointType::Filter);
             assert!(joint.is_valid());
         }
+    }
+
+    #[test]
+    fn joint_relationships_and_user_data_round_trip() {
+        let world = World::new(Vec3::ZERO);
+        let body_a = world.create_body(BodyDef::dynamic_at(Vec3::new(-1.0, 0.0, 0.0)));
+        let body_b = world.create_body(BodyDef::dynamic_at(Vec3::new(1.0, 0.0, 0.0)));
+        let _shape_a = box_shape(&body_a);
+        let _shape_b = box_shape(&body_b);
+
+        let distance = world.create_distance_joint(DistanceJointDef::new(&body_a, &body_b));
+        let filter = world.create_filter_joint(FilterJointDef::new(&body_a, &body_b));
+
+        distance.set_user_data(0x1234);
+        assert_eq!(distance.user_data(), 0x1234);
+        assert_eq!(distance.body_a_id(), body_a.id());
+        assert_eq!(distance.body_b_id(), body_b.id());
+        assert_eq!(distance.world_id(), world.id());
+
+        let ids = body_a.joint_ids();
+        assert_eq!(body_a.joint_count(), 2);
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&distance.id()));
+        assert!(ids.contains(&filter.id()));
+        assert!(ids.iter().all(|id| id.is_valid()));
     }
 }
