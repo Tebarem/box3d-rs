@@ -40,5 +40,3 @@ world.step(1.0 / 60.0, 4);
 ```
 
 Feature groups are intentionally small: worlds and bodies manage simulation state, shapes wrap common primitives and owned mesh data, queries/collision cover ray casts and mover helpers, joints/events expose typed handles, and advanced modules cover callbacks, debug draw, recording/replay, and worker-count control.
-
-Release agents must not run a real `cargo publish`; for release validation only, use `rtk cargo publish -p box3d-sys --dry-run --locked` and `rtk cargo publish -p box3d --dry-run --locked`.
