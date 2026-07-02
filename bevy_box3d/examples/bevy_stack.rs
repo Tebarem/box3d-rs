@@ -3,9 +3,7 @@ use bevy::{
     math::primitives::{Cuboid, Sphere},
     prelude::*,
 };
-use bevy_box3d::{
-    Box3dConfig, Box3dPlugin, Box3dStats, Box3dTimestep, Collider, Damping, RigidBody, Velocity,
-};
+use bevy_box3d::{Box3dConfig, Box3dPlugin, Box3dStats, Collider, Damping, RigidBody, Velocity};
 use box3d::SurfaceMaterial;
 
 const HALF_EXTENTS: Vec3 = Vec3::new(0.5, 0.5, 0.5);
@@ -38,9 +36,7 @@ fn main() {
             EntityCountDiagnosticsPlugin::default(),
             Box3dPlugin {
                 config: Box3dConfig {
-                    timestep: Box3dTimestep::Fixed {
-                        ticks_per_second: PHYSICS_TICK_RATE,
-                    },
+                    fixed_hz: PHYSICS_TICK_RATE as f64,
                     sub_steps: PHYSICS_SUB_STEPS,
                     continuous_enabled: false,
                     ..default()

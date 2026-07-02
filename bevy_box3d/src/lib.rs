@@ -1,8 +1,11 @@
 //! Bevy integration for Box3D.
 
+use bevy_app::{FixedUpdate, RunFixedMainLoop, RunFixedMainLoopSystems};
+use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::prelude::Entity;
 use bevy_ecs::prelude::{Component, Resource};
-use bevy_ecs::schedule::IntoScheduleConfigs;
+use bevy_ecs::schedule::{IntoScheduleConfigs, SystemSet};
+use bevy_time::{Fixed, Time};
 
 use box3d::Vec3 as BoxVec3;
 use box3d::{
@@ -19,30 +22,20 @@ pub use bevy_math::Vec3;
 /// so the feature is pinned to the latest compatible 0.18 release.
 pub const SUPPORTED_BEVY_VERSION: &str = "0.18";
 
-/// How the plugin advances the Box3D world.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Box3dTimestep {
-    /// Step at a fixed simulation tick rate.
-    Fixed { ticks_per_second: f32 },
-    /// Step once per Bevy update using elapsed wall time, capped by `max_delta`.
-    Variable { max_delta: f32 },
-}
-
-impl Default for Box3dTimestep {
-    fn default() -> Self {
-        Self::Fixed {
-            ticks_per_second: 60.0,
-        }
-    }
+/// Public system sets for ordering gameplay around Box3D.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
+pub enum Box3dSet {
+    Sync,
+    Step,
+    Writeback,
 }
 
 /// Settings for the Box3D world owned by a Bevy app.
 #[derive(Clone, Copy, Debug, PartialEq, Resource)]
 pub struct Box3dConfig {
     pub gravity: Vec3,
-    pub timestep: Box3dTimestep,
+    pub fixed_hz: f64,
     pub sub_steps: i32,
-    pub max_frame_steps: u32,
     pub capacity: Capacity,
     pub sleeping_enabled: bool,
     pub continuous_enabled: bool,
@@ -52,9 +45,8 @@ impl Default for Box3dConfig {
     fn default() -> Self {
         Self {
             gravity: Vec3::new(0.0, -9.8, 0.0),
-            timestep: Box3dTimestep::default(),
+            fixed_hz: 60.0,
             sub_steps: 4,
-            max_frame_steps: 4,
             capacity: Capacity::default(),
             sleeping_enabled: true,
             continuous_enabled: true,
@@ -81,21 +73,37 @@ pub struct Box3dPlugin {
 impl bevy_app::Plugin for Box3dPlugin {
     fn build(&self, app: &mut bevy_app::App) {
         app.insert_resource(self.config)
+            .insert_resource(Time::<Fixed>::from_hz(fixed_hz(self.config.fixed_hz)))
             .insert_resource(Box3dStats::default())
             .insert_non_send_resource(Box3dWorld::new(self.config))
+            .configure_sets(FixedUpdate, (Box3dSet::Sync, Box3dSet::Step).chain())
+            .configure_sets(
+                RunFixedMainLoop,
+                Box3dSet::Writeback.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop),
+            )
             .add_systems(
-                bevy_app::Update,
+                RunFixedMainLoop,
+                sync_fixed_timestep.in_set(RunFixedMainLoopSystems::BeforeFixedMainLoop),
+            )
+            .add_systems(
+                FixedUpdate,
                 (
-                    create_box3d_bodies,
-                    sync_velocity_to_box3d,
-                    sync_damping_to_box3d,
-                    sync_static_transforms_to_box3d,
-                    step_box3d_world,
-                    sync_box3d_to_transforms,
-                    cleanup_box3d_bodies,
-                )
-                    .chain(),
+                    (
+                        cleanup_box3d_bodies,
+                        create_box3d_bodies,
+                        sync_velocity_to_box3d,
+                        sync_damping_to_box3d,
+                        sync_static_transforms_to_box3d,
+                    )
+                        .chain()
+                        .in_set(Box3dSet::Sync),
+                    step_box3d_world.in_set(Box3dSet::Step),
+                ),
             );
+        app.add_systems(
+            RunFixedMainLoop,
+            sync_box3d_to_transforms.in_set(Box3dSet::Writeback),
+        );
     }
 }
 
@@ -209,9 +217,6 @@ pub struct Box3dWorld {
     world: World,
     bodies: HashMap<Entity, BodyId>,
     transforms: HashMap<Entity, InterpolatedTransform>,
-    interpolation_alpha: f32,
-    last_step: std::time::Instant,
-    accumulator: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -230,9 +235,6 @@ impl Box3dWorld {
             world,
             bodies: HashMap::new(),
             transforms: HashMap::new(),
-            interpolation_alpha: 1.0,
-            last_step: std::time::Instant::now(),
-            accumulator: 0.0,
         }
     }
 
@@ -399,6 +401,7 @@ fn sync_static_transforms_to_box3d(
 }
 
 fn step_box3d_world(
+    fixed_time: bevy_ecs::prelude::Res<Time<Fixed>>,
     config: bevy_ecs::prelude::Res<Box3dConfig>,
     mut stats: bevy_ecs::prelude::ResMut<Box3dStats>,
     mut physics: bevy_ecs::prelude::NonSendMut<Box3dWorld>,
@@ -410,62 +413,32 @@ fn step_box3d_world(
         .set_continuous_enabled(config.continuous_enabled);
 
     let started = std::time::Instant::now();
-    let now = std::time::Instant::now();
-    let elapsed = now.duration_since(physics.last_step).as_secs_f32();
-    physics.last_step = now;
-
-    let mut step_count = 0;
-    let (time_step, interpolation_alpha) = match config.timestep {
-        Box3dTimestep::Fixed { ticks_per_second } => {
-            let Some(time_step) = fixed_time_step(ticks_per_second) else {
-                physics.interpolation_alpha = 1.0;
-                update_stats(&mut stats, &physics, 0, 0.0, started);
-                return;
-            };
-
-            let max_frame_steps = config.max_frame_steps;
-            if max_frame_steps == 0 {
-                physics.interpolation_alpha = 1.0;
-                update_stats(&mut stats, &physics, 0, time_step, started);
-                return;
-            }
-
-            physics.accumulator += elapsed.min(time_step * max_frame_steps as f32);
-            while physics.accumulator >= time_step && step_count < max_frame_steps {
-                store_previous_transforms(&mut physics);
-                physics.world.step(time_step, config.sub_steps);
-                store_current_transforms(&mut physics);
-                physics.accumulator -= time_step;
-                step_count += 1;
-            }
-
-            if step_count == max_frame_steps {
-                physics.accumulator = physics.accumulator.min(time_step);
-            }
-
-            (
-                time_step,
-                interpolation_alpha(physics.accumulator, time_step),
-            )
-        }
-        Box3dTimestep::Variable { max_delta } => {
-            let time_step = elapsed.min(max_delta).max(0.0);
-            if time_step > 0.0 {
-                store_previous_transforms(&mut physics);
-                physics.world.step(time_step, config.sub_steps);
-                store_current_transforms(&mut physics);
-                step_count = 1;
-            }
-            (time_step, 1.0)
-        }
-    };
-
-    physics.interpolation_alpha = interpolation_alpha;
-    update_stats(&mut stats, &physics, step_count, time_step, started);
+    let time_step = fixed_time.delta_secs();
+    if time_step > 0.0 {
+        store_previous_transforms(&mut physics);
+        physics.world.step(time_step, config.sub_steps);
+        store_current_transforms(&mut physics);
+        update_stats(&mut stats, &physics, 1, time_step, started);
+    } else {
+        update_stats(&mut stats, &physics, 0, time_step, started);
+    }
 }
 
-fn fixed_time_step(ticks_per_second: f32) -> Option<f32> {
-    (ticks_per_second.is_finite() && ticks_per_second > 0.0).then_some(1.0 / ticks_per_second)
+fn sync_fixed_timestep(
+    config: bevy_ecs::prelude::Res<Box3dConfig>,
+    mut fixed_time: bevy_ecs::prelude::ResMut<Time<Fixed>>,
+) {
+    if config.is_changed() {
+        fixed_time.set_timestep_hz(fixed_hz(config.fixed_hz));
+    }
+}
+
+fn fixed_hz(hz: f64) -> f64 {
+    if hz.is_finite() && hz > 0.0 {
+        hz
+    } else {
+        60.0
+    }
 }
 
 fn update_stats(
@@ -479,7 +452,6 @@ fn update_stats(
     stats.step_count = step_count;
     stats.step_ms = started.elapsed().as_secs_f64() * 1000.0;
     stats.time_step = time_step.max(0.0);
-    stats.interpolation_alpha = physics.interpolation_alpha;
 }
 
 fn store_previous_transforms(physics: &mut Box3dWorld) {
@@ -503,15 +475,9 @@ fn store_current_transforms(physics: &mut Box3dWorld) {
     }
 }
 
-fn interpolation_alpha(accumulator: f32, time_step: f32) -> f32 {
-    if time_step > 0.0 {
-        (accumulator / time_step).clamp(0.0, 1.0)
-    } else {
-        1.0
-    }
-}
-
 fn sync_box3d_to_transforms(
+    fixed_time: bevy_ecs::prelude::Res<Time<Fixed>>,
+    mut stats: bevy_ecs::prelude::ResMut<Box3dStats>,
     physics: bevy_ecs::prelude::NonSend<Box3dWorld>,
     mut query: bevy_ecs::prelude::Query<(
         Entity,
@@ -519,6 +485,10 @@ fn sync_box3d_to_transforms(
         &mut bevy_transform::prelude::Transform,
     )>,
 ) {
+    let alpha = fixed_time.overstep_fraction();
+    stats.body_count = physics.bodies.len();
+    stats.interpolation_alpha = alpha;
+
     for (entity, rigid_body, mut transform) in &mut query {
         if *rigid_body != RigidBody::Dynamic {
             continue;
@@ -528,7 +498,6 @@ fn sync_box3d_to_transforms(
             continue;
         };
 
-        let alpha = physics.interpolation_alpha;
         transform.translation = lerp_vec3(interpolated.previous.p, interpolated.current.p, alpha);
         transform.rotation = to_bevy_quat(interpolated.previous.q)
             .slerp(to_bevy_quat(interpolated.current.q), alpha);
@@ -622,23 +591,21 @@ mod tests {
         assert_eq!(collider.def.friction, 0.8);
     }
 
-    #[cfg(feature = "bevy")]
     #[test]
-    fn interpolation_alpha_tracks_fixed_step_remainder() {
-        assert!((interpolation_alpha(0.025, 0.05) - 0.5).abs() < f32::EPSILON);
-        assert_eq!(interpolation_alpha(0.1, 0.05), 1.0);
-        assert_eq!(interpolation_alpha(0.025, 0.0), 1.0);
+    fn invalid_fixed_hz_falls_back_to_default() {
+        assert_eq!(fixed_hz(120.0), 120.0);
+        assert_eq!(fixed_hz(0.0), 60.0);
+        assert_eq!(fixed_hz(f64::NAN), 60.0);
     }
 
-    #[cfg(feature = "bevy")]
     #[test]
     fn plugin_creates_body_and_syncs_dynamic_transform() {
         let mut app = bevy_app::App::new();
+        app.add_plugins(bevy_time::TimePlugin)
+            .insert_resource(bevy_time::TimeUpdateStrategy::FixedTimesteps(1));
         app.add_plugins(Box3dPlugin {
             config: Box3dConfig {
-                timestep: Box3dTimestep::Fixed {
-                    ticks_per_second: 60.0,
-                },
+                fixed_hz: 60.0,
                 sub_steps: 4,
                 ..Box3dConfig::default()
             },
