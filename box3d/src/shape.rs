@@ -79,7 +79,7 @@ impl Body<'_> {
     }
 }
 
-fn raw_shape_def(def: ShapeDef) -> sys::b3ShapeDef {
+pub(crate) fn raw_shape_def(def: ShapeDef) -> sys::b3ShapeDef {
     let mut raw_def = unsafe { sys::b3DefaultShapeDef() };
     raw_def.density = def.density;
     raw_def.baseMaterial.friction = def.friction;
