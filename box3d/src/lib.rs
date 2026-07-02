@@ -6,6 +6,7 @@ mod error;
 mod events;
 mod handle;
 mod hull;
+mod joint;
 mod math;
 mod mesh;
 mod query;
@@ -25,6 +26,12 @@ pub use events::{
     ContactTouchEvent, JointEvent, JointEvents, JointId, SensorEvents, SensorTouchEvent, ShapeId,
 };
 pub use hull::{BoxHull, Hull, HullRef};
+pub use joint::{
+    DistanceJoint, DistanceJointDef, FilterJoint, FilterJointDef, Joint, JointDef, JointType,
+    MotorJoint, MotorJointDef, ParallelJoint, ParallelJointDef, PrismaticJoint, PrismaticJointDef,
+    RevoluteJoint, RevoluteJointDef, SphericalJoint, SphericalJointDef, WeldJoint, WeldJointDef,
+    WheelJoint, WheelJointDef,
+};
 pub use math::{Aabb, Filter, MassData, Matrix3, Quat, SurfaceMaterial, Transform, Vec3};
 pub use mesh::{HeightField, Mesh};
 pub use query::{

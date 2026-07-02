@@ -1,6 +1,5 @@
-use box3d_sys as sys;
-
 use crate::{math::Vec3, query::Plane};
+use box3d_sys as sys;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MoverCapsule {
@@ -21,15 +20,6 @@ impl MoverCapsule {
 
     pub fn points(self) -> [Vec3; 2] {
         [self.point1, self.point2]
-    }
-
-    pub(crate) fn raw(self) -> sys::b3Capsule {
-        assert!(self.radius > 0.0);
-        sys::b3Capsule {
-            center1: self.point1.into(),
-            center2: self.point2.into(),
-            radius: self.radius,
-        }
     }
 }
 
@@ -117,12 +107,11 @@ mod tests {
     #[test]
     fn mover_capsule_keeps_points_and_radius() {
         let mover = MoverCapsule::new(Vec3::new(0.0, -0.5, 0.0), Vec3::new(0.0, 0.5, 0.0), 0.25);
-        let raw = mover.raw();
 
         assert_eq!(mover.points(), [mover.point1, mover.point2]);
-        assert_close(raw.radius, 0.25);
-        assert_close(raw.center1.y, -0.5);
-        assert_close(raw.center2.y, 0.5);
+        assert_close(mover.radius, 0.25);
+        assert_close(mover.point1.y, -0.5);
+        assert_close(mover.point2.y, 0.5);
     }
 
     #[test]

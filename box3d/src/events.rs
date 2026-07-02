@@ -142,8 +142,12 @@ impl ContactEvents<'_> {
         events(self.raw.hitEvents, self.raw.hitCount)
             .iter()
             .map(|event| ContactHitEvent {
-                shape_a: ShapeId { raw: event.shapeIdA },
-                shape_b: ShapeId { raw: event.shapeIdB },
+                shape_a: ShapeId {
+                    raw: event.shapeIdA,
+                },
+                shape_b: ShapeId {
+                    raw: event.shapeIdB,
+                },
                 contact: ContactId {
                     raw: event.contactId,
                 },
@@ -252,8 +256,12 @@ impl SensorTouch for sys::b3SensorEndTouchEvent {
 
 fn contact_begin_event(event: &sys::b3ContactBeginTouchEvent) -> ContactTouchEvent {
     ContactTouchEvent {
-        shape_a: ShapeId { raw: event.shapeIdA },
-        shape_b: ShapeId { raw: event.shapeIdB },
+        shape_a: ShapeId {
+            raw: event.shapeIdA,
+        },
+        shape_b: ShapeId {
+            raw: event.shapeIdB,
+        },
         contact: ContactId {
             raw: event.contactId,
         },
@@ -262,8 +270,12 @@ fn contact_begin_event(event: &sys::b3ContactBeginTouchEvent) -> ContactTouchEve
 
 fn contact_end_event(event: &sys::b3ContactEndTouchEvent) -> ContactTouchEvent {
     ContactTouchEvent {
-        shape_a: ShapeId { raw: event.shapeIdA },
-        shape_b: ShapeId { raw: event.shapeIdB },
+        shape_a: ShapeId {
+            raw: event.shapeIdA,
+        },
+        shape_b: ShapeId {
+            raw: event.shapeIdB,
+        },
         contact: ContactId {
             raw: event.contactId,
         },
@@ -291,9 +303,10 @@ mod tests {
         body.set_linear_velocity(Vec3::new(1.0, 0.0, 0.0));
         world.step(1.0 / 60.0, 4);
 
-        let moved = world.body_events().moves().any(|event| {
-            event.body.is_valid() && event.transform.p.x > 0.0 && !event.fell_asleep
-        });
+        let moved = world
+            .body_events()
+            .moves()
+            .any(|event| event.body.is_valid() && event.transform.p.x > 0.0 && !event.fell_asleep);
         assert!(moved);
     }
 
