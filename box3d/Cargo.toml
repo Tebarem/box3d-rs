@@ -7,5 +7,14 @@ license = "MIT"
 readme = "README.md"
 repository = "https://github.com/Tebarem/box3d-rs"
 
+[features]
+default = []
+bevy_ecs = ["dep:bevy_ecs"]
+bevy = ["bevy_ecs", "dep:bevy_app", "dep:bevy_math", "dep:bevy_transform"]
+
 [dependencies]
+bevy_app = { version = "0.18.1", optional = true }
+bevy_ecs = { version = "0.18.1", optional = true }
+bevy_math = { version = "0.18.1", optional = true }
+bevy_transform = { version = "0.18.1", optional = true }
 box3d-sys = { path = "..", version = "0.1.13" }
