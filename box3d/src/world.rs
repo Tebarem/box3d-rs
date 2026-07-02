@@ -1,9 +1,10 @@
-use std::{cell::Cell, marker::PhantomData};
+use std::{cell::Cell, marker::PhantomData, sync::Arc};
 
 use box3d_sys as sys;
 
 use crate::{
     body::{Body, BodyDef, BodyType},
+    callbacks::CallbackState,
     handle,
     math::Vec3,
     Result,
@@ -11,6 +12,7 @@ use crate::{
 
 pub struct World {
     raw: sys::b3WorldId,
+    pub(crate) callbacks: Arc<CallbackState>,
     _not_sync: PhantomData<Cell<()>>,
 }
 
@@ -82,6 +84,7 @@ impl World {
 
         Ok(Self {
             raw,
+            callbacks: Self::callback_state(),
             _not_sync: PhantomData,
         })
     }
@@ -107,6 +110,7 @@ impl World {
 
     pub fn step(&self, time_step: f32, sub_step_count: i32) {
         unsafe { sys::b3World_Step(self.raw, time_step, sub_step_count) };
+        self.resume_callback_panic();
     }
 
     pub fn gravity(&self) -> Vec3 {
@@ -211,6 +215,10 @@ impl Default for World {
 
 impl Drop for World {
     fn drop(&mut self) {
+        unsafe {
+            sys::b3World_SetCustomFilterCallback(self.raw, None, std::ptr::null_mut());
+            sys::b3World_SetPreSolveCallback(self.raw, None, std::ptr::null_mut());
+        }
         handle::destroy_world(self.raw);
     }
 }

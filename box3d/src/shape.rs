@@ -41,6 +41,7 @@ pub struct ShapeDef {
     pub enable_contact_events: bool,
     pub enable_hit_events: bool,
     pub enable_pre_solve_events: bool,
+    pub enable_custom_filtering: bool,
 }
 
 impl Default for ShapeDef {
@@ -53,6 +54,7 @@ impl Default for ShapeDef {
             enable_contact_events: false,
             enable_hit_events: false,
             enable_pre_solve_events: false,
+            enable_custom_filtering: false,
         }
     }
 }
@@ -210,6 +212,7 @@ pub(crate) fn raw_shape_def(def: ShapeDef) -> sys::b3ShapeDef {
     raw_def.enableContactEvents = def.enable_contact_events;
     raw_def.enableHitEvents = def.enable_hit_events;
     raw_def.enablePreSolveEvents = def.enable_pre_solve_events;
+    raw_def.enableCustomFiltering = def.enable_custom_filtering;
     raw_def
 }
 

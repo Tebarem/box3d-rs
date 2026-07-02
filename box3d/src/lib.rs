@@ -1,4 +1,5 @@
 mod body;
+mod callbacks;
 mod character;
 mod collision;
 mod compound;
@@ -15,6 +16,7 @@ mod shape;
 mod world;
 
 pub use body::{Body, BodyDef, BodyType};
+pub use callbacks::PreSolveContact;
 pub use character::{clip_vector, solve_planes, CollisionPlane, MoverCapsule};
 pub use collision::{
     compute_aabb, compute_mass, shape_cast, shape_distance, BoxShape, Capsule, DistanceOutput,

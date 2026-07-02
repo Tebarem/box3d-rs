@@ -25,6 +25,10 @@ pub struct ShapeId {
 }
 
 impl ShapeId {
+    pub(crate) fn from_raw(raw: sys::b3ShapeId) -> Self {
+        Self { raw }
+    }
+
     pub fn is_valid(self) -> bool {
         handle::is_shape_valid(self.raw)
     }
