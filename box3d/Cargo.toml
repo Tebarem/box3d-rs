@@ -1,6 +1,6 @@
 [package]
 name = "box3d"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2021"
 description = "Safe Rust bindings for Box3D."
 license = "MIT"
@@ -8,4 +8,4 @@ readme = "README.md"
 repository = "https://github.com/Tebarem/box3d-rs"
 
 [dependencies]
-box3d-sys = { path = "..", version = "0.1.12" }
+box3d-sys = { path = "..", version = "0.1.13" }
