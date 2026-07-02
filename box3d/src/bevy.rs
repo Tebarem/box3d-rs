@@ -12,10 +12,14 @@ use bevy_ecs::schedule::IntoScheduleConfigs;
 use box3d_sys as sys;
 
 #[cfg(feature = "bevy")]
+use crate::Vec3 as BoxVec3;
+#[cfg(feature = "bevy")]
 use crate::{handle, BodyDef, Quat, World};
-use crate::{BodyId, BodyType, Capacity, ShapeDef, ShapeId, SurfaceMaterial, Vec3};
+use crate::{BodyId, BodyType, Capacity, ShapeDef, ShapeId, SurfaceMaterial};
 #[cfg(feature = "bevy")]
 use std::collections::HashMap;
+
+pub use bevy_math::Vec3;
 
 /// Bevy minor version supported by this integration.
 ///
@@ -232,7 +236,7 @@ struct InterpolatedTransform {
 #[cfg(feature = "bevy")]
 impl Box3dWorld {
     pub fn new(config: Box3dConfig) -> Self {
-        let world = World::with_capacity(config.gravity, config.capacity);
+        let world = World::with_capacity(to_box3d_vec3(config.gravity), config.capacity);
         world.set_sleeping_enabled(config.sleeping_enabled);
         world.set_continuous_enabled(config.continuous_enabled);
 
@@ -300,8 +304,8 @@ fn create_box3d_bodies(
         body.set_transform(start.p, start.q);
 
         if let Some(velocity) = velocity {
-            body.set_linear_velocity(velocity.linear);
-            body.set_angular_velocity(velocity.angular);
+            body.set_linear_velocity(to_box3d_vec3(velocity.linear));
+            body.set_angular_velocity(to_box3d_vec3(velocity.angular));
         }
         if let Some(damping) = damping {
             body.set_linear_damping(damping.linear);
@@ -313,10 +317,10 @@ fn create_box3d_bodies(
         let shape_id = collider.map(|collider| {
             let shape = match collider.shape {
                 ColliderShape::Cuboid { half_extents } => {
-                    body.create_box(half_extents, collider.def)
+                    body.create_box(to_box3d_vec3(half_extents), collider.def)
                 }
                 ColliderShape::Sphere { radius } => {
-                    body.create_sphere(Vec3::ZERO, radius, collider.def)
+                    body.create_sphere(BoxVec3::ZERO, radius, collider.def)
                 }
             };
 
@@ -365,8 +369,8 @@ fn sync_velocity_to_box3d(
         };
 
         unsafe {
-            sys::b3Body_SetLinearVelocity(raw, velocity.linear.into());
-            sys::b3Body_SetAngularVelocity(raw, velocity.angular.into());
+            sys::b3Body_SetLinearVelocity(raw, to_box3d_vec3(velocity.linear).into());
+            sys::b3Body_SetAngularVelocity(raw, to_box3d_vec3(velocity.angular).into());
         }
     }
 }
@@ -426,7 +430,7 @@ fn step_box3d_world(
     mut stats: bevy_ecs::prelude::ResMut<Box3dStats>,
     mut physics: bevy_ecs::prelude::NonSendMut<Box3dWorld>,
 ) {
-    physics.world.set_gravity(config.gravity);
+    physics.world.set_gravity(to_box3d_vec3(config.gravity));
     physics.world.set_sleeping_enabled(config.sleeping_enabled);
     physics
         .world
@@ -594,13 +598,13 @@ fn cleanup_box3d_bodies(
 #[cfg(feature = "bevy")]
 fn bevy_transform_to_box3d(transform: &bevy_transform::prelude::Transform) -> crate::Transform {
     crate::Transform {
-        p: Vec3::new(
+        p: BoxVec3::new(
             transform.translation.x,
             transform.translation.y,
             transform.translation.z,
         ),
         q: Quat::new(
-            Vec3::new(
+            BoxVec3::new(
                 transform.rotation.x,
                 transform.rotation.y,
                 transform.rotation.z,
@@ -611,13 +615,18 @@ fn bevy_transform_to_box3d(transform: &bevy_transform::prelude::Transform) -> cr
 }
 
 #[cfg(feature = "bevy")]
-fn to_bevy_vec3(value: Vec3) -> bevy_math::Vec3 {
-    bevy_math::Vec3::new(value.x, value.y, value.z)
+fn to_box3d_vec3(value: Vec3) -> BoxVec3 {
+    BoxVec3::new(value.x, value.y, value.z)
 }
 
 #[cfg(feature = "bevy")]
-fn lerp_vec3(from: Vec3, to: Vec3, alpha: f32) -> bevy_math::Vec3 {
-    to_bevy_vec3(Vec3::new(
+fn to_bevy_vec3(value: BoxVec3) -> Vec3 {
+    Vec3::new(value.x, value.y, value.z)
+}
+
+#[cfg(feature = "bevy")]
+fn lerp_vec3(from: BoxVec3, to: BoxVec3, alpha: f32) -> Vec3 {
+    to_bevy_vec3(BoxVec3::new(
         from.x + (to.x - from.x) * alpha,
         from.y + (to.y - from.y) * alpha,
         from.z + (to.z - from.z) * alpha,

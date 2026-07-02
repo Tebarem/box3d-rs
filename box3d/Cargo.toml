@@ -9,8 +9,8 @@ repository = "https://github.com/Tebarem/box3d-rs"
 
 [features]
 default = []
-bevy_ecs = ["dep:bevy_ecs"]
-bevy = ["bevy_ecs", "dep:bevy_app", "dep:bevy_math", "dep:bevy_transform"]
+bevy_ecs = ["dep:bevy_ecs", "dep:bevy_math"]
+bevy = ["bevy_ecs", "dep:bevy_app", "dep:bevy_transform"]
 
 [dependencies]
 bevy_app = { version = "0.18.1", optional = true }
