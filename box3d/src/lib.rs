@@ -72,16 +72,17 @@ pub use joint::{
     WheelJoint, WheelJointDef,
 };
 pub use math::{
-    compute_cos_sin, compute_quat_between_unit_vectors, deterministic_atan2, is_valid_aabb,
-    is_valid_float, is_valid_matrix3, is_valid_quat, is_valid_transform, is_valid_vec3,
+    compute_cos_sin, compute_quat_between_unit_vectors, deterministic_atan2, is_bounded_aabb,
+    is_sane_aabb, is_valid_aabb, is_valid_float, is_valid_matrix3, is_valid_plane,
+    is_valid_position, is_valid_quat, is_valid_transform, is_valid_vec3, is_valid_world_transform,
     line_distance, make_quat_from_matrix, point_to_segment_distance, segment_distance, steiner,
-    Aabb, CosSin, Filter, MassData, Matrix3, Quat, SegmentDistance, SurfaceMaterial, Transform,
-    Vec3,
+    Aabb, CosSin, Filter, MassData, Matrix3, Plane, Quat, SegmentDistance, SurfaceMaterial,
+    Transform, Vec3,
 };
 pub use mesh::{HeightField, Mesh, MeshCreateOptions, MeshQueryTriangle, MeshTriangle};
 pub use query::{
-    BodyCastHit, BodyClosestPoint, BodyPlane, CastHit, MoverPlane, Plane, QueryFilter, QueryStats,
-    RayHit, ShapeProxy, ShapeRef,
+    BodyCastHit, BodyClosestPoint, BodyPlane, CastHit, MoverPlane, QueryFilter, QueryStats, RayHit,
+    ShapeProxy, ShapeRef,
 };
 pub use recording::{
     validate_replay, RecPlayer, RecPlayerInfo, RecQueryHit, RecQueryInfo, RecQueryType, Recording,

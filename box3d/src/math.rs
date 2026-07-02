@@ -192,6 +192,30 @@ impl From<sys::b3AABB> for Aabb {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Plane {
+    pub normal: Vec3,
+    pub offset: f32,
+}
+
+impl From<Plane> for sys::b3Plane {
+    fn from(value: Plane) -> Self {
+        Self {
+            normal: value.normal.into(),
+            offset: value.offset,
+        }
+    }
+}
+
+impl From<sys::b3Plane> for Plane {
+    fn from(value: sys::b3Plane) -> Self {
+        Self {
+            normal: value.normal.into(),
+            offset: value.offset,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct MassData {
     pub mass: f32,
@@ -351,6 +375,26 @@ pub fn is_valid_aabb(value: Aabb) -> bool {
     unsafe { sys::b3IsValidAABB(value.into()) }
 }
 
+pub fn is_bounded_aabb(value: Aabb) -> bool {
+    unsafe { sys::b3IsBoundedAABB(value.into()) }
+}
+
+pub fn is_sane_aabb(value: Aabb) -> bool {
+    unsafe { sys::b3IsSaneAABB(value.into()) }
+}
+
+pub fn is_valid_plane(value: Plane) -> bool {
+    unsafe { sys::b3IsValidPlane(value.into()) }
+}
+
+pub fn is_valid_position(value: Vec3) -> bool {
+    unsafe { sys::b3IsValidPosition(value.into()) }
+}
+
+pub fn is_valid_world_transform(value: Transform) -> bool {
+    unsafe { sys::b3IsValidWorldTransform(value.into()) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +412,12 @@ mod tests {
             upper_bound: Vec3::new(4.0, 5.0, 6.0),
         };
         assert_eq!(Aabb::from(sys::b3AABB::from(aabb)), aabb);
+
+        let plane = Plane {
+            normal: Vec3::new(0.0, 1.0, 0.0),
+            offset: 2.0,
+        };
+        assert_eq!(Plane::from(sys::b3Plane::from(plane)), plane);
 
         let mass = MassData {
             mass: 7.0,
@@ -447,7 +497,21 @@ mod tests {
         assert!(is_valid_float(1.0));
         assert!(is_valid_vec3(Vec3::ZERO));
         assert!(is_valid_transform(Transform::IDENTITY));
+        assert!(is_valid_world_transform(Transform::IDENTITY));
+        assert!(is_valid_position(Vec3::ZERO));
+        assert!(is_valid_plane(Plane {
+            normal: Vec3::new(0.0, 1.0, 0.0),
+            offset: 0.0,
+        }));
         assert!(is_valid_aabb(Aabb {
+            lower_bound: Vec3::ZERO,
+            upper_bound: Vec3::new(1.0, 1.0, 1.0),
+        }));
+        assert!(is_bounded_aabb(Aabb {
+            lower_bound: Vec3::ZERO,
+            upper_bound: Vec3::new(1.0, 1.0, 1.0),
+        }));
+        assert!(is_sane_aabb(Aabb {
             lower_bound: Vec3::ZERO,
             upper_bound: Vec3::new(1.0, 1.0, 1.0),
         }));

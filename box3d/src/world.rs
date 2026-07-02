@@ -105,13 +105,31 @@ impl World {
         Self::try_new(gravity).expect("box3d returned an invalid world")
     }
 
+    pub fn with_capacity(gravity: Vec3, capacity: Capacity) -> Self {
+        Self::try_with_capacity(gravity, capacity).expect("box3d returned an invalid world")
+    }
+
     pub(crate) fn raw(&self) -> sys::b3WorldId {
         self.raw
     }
 
     pub fn try_new(gravity: Vec3) -> Result<Self> {
+        Self::try_with_capacity(gravity, Capacity::default())
+    }
+
+    pub fn try_with_capacity(gravity: Vec3, capacity: Capacity) -> Result<Self> {
+        if capacity.static_shape_count < 0
+            || capacity.dynamic_shape_count < 0
+            || capacity.static_body_count < 0
+            || capacity.dynamic_body_count < 0
+            || capacity.contact_count < 0
+        {
+            return Err(crate::Error::InvalidInput);
+        }
+
         let mut def = unsafe { sys::b3DefaultWorldDef() };
         def.gravity = gravity.into();
+        def.capacity = capacity.into();
 
         let raw = handle::create_world(&def)?;
 
@@ -299,6 +317,18 @@ impl From<sys::b3Capacity> for Capacity {
             static_body_count: value.staticBodyCount,
             dynamic_body_count: value.dynamicBodyCount,
             contact_count: value.contactCount,
+        }
+    }
+}
+
+impl From<Capacity> for sys::b3Capacity {
+    fn from(value: Capacity) -> Self {
+        Self {
+            staticShapeCount: value.static_shape_count,
+            dynamicShapeCount: value.dynamic_shape_count,
+            staticBodyCount: value.static_body_count,
+            dynamicBodyCount: value.dynamic_body_count,
+            contactCount: value.contact_count,
         }
     }
 }
@@ -498,6 +528,30 @@ mod tests {
         world.step(1.0 / 60.0, 4);
         let _ = world.counters();
         let _ = world.profile();
+    }
+
+    #[test]
+    fn world_can_be_created_with_initial_capacity() {
+        let capacity = Capacity {
+            static_shape_count: 4,
+            dynamic_shape_count: 8,
+            static_body_count: 2,
+            dynamic_body_count: 3,
+            contact_count: 16,
+        };
+        let world = World::with_capacity(Vec3::ZERO, capacity);
+        assert_eq!(world.gravity(), Vec3::ZERO);
+        assert_eq!(
+            World::try_with_capacity(
+                Vec3::ZERO,
+                Capacity {
+                    static_shape_count: -1,
+                    ..Capacity::default()
+                },
+            )
+            .err(),
+            Some(crate::Error::InvalidInput)
+        );
     }
 
     #[test]

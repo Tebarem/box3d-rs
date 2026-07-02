@@ -11,7 +11,7 @@ use box3d_sys as sys;
 use crate::{
     body::Body,
     handle,
-    math::{Aabb, Transform, Vec3},
+    math::{Aabb, Plane, Transform, Vec3},
     world::World,
     Error, Result,
 };
@@ -128,21 +128,6 @@ impl ShapeRef<'_> {
 
     pub fn is_valid(self) -> bool {
         handle::is_shape_valid(self.raw)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Plane {
-    pub normal: Vec3,
-    pub offset: f32,
-}
-
-impl From<sys::b3Plane> for Plane {
-    fn from(value: sys::b3Plane) -> Self {
-        Self {
-            normal: value.normal.into(),
-            offset: value.offset,
-        }
     }
 }
 

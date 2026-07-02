@@ -1,4 +1,4 @@
-use crate::{math::Vec3, query::Plane};
+use crate::math::{Plane, Vec3};
 use box3d_sys as sys;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
