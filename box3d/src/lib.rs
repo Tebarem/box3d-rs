@@ -8,6 +8,7 @@ mod collision;
 mod compound;
 mod contact;
 mod debug_draw;
+mod dynamic_tree;
 mod error;
 mod events;
 mod handle;
@@ -36,6 +37,10 @@ pub use collision::{
 pub use compound::{Compound, CompoundPart};
 pub use contact::{ContactData, ContactManifold, ContactPoint};
 pub use debug_draw::{DebugDraw, DEFAULT_DEBUG_MASK};
+pub use dynamic_tree::{
+    DynamicTree, TreeBoxCastInput, TreeCastHit, TreeClosestHit, TreeHit, TreeProxy,
+    TreeRayCastInput,
+};
 pub use error::{Error, Result};
 pub use events::{
     BodyEvents, BodyId, BodyMoveEvent, ContactEvents, ContactHitEvent, ContactId,
