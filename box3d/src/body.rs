@@ -5,7 +5,7 @@ use box3d_sys as sys;
 use crate::{
     handle,
     math::{MassData, Matrix3, Quat, Transform, Vec3},
-    shape::{Shape, ShapeDef},
+    shape::{raw_shape_def, Shape, ShapeDef},
     world::World,
     Result,
 };
@@ -216,9 +216,7 @@ impl<'world> Body<'world> {
     }
 
     pub fn try_create_box(&self, half_extents: Vec3, def: ShapeDef) -> Result<Shape<'_>> {
-        let mut raw_def = unsafe { sys::b3DefaultShapeDef() };
-        raw_def.density = def.density;
-        raw_def.baseMaterial.friction = def.friction;
+        let raw_def = raw_shape_def(def);
 
         let hull = unsafe { sys::b3MakeBoxHull(half_extents.x, half_extents.y, half_extents.z) };
         let raw = handle::shape(unsafe { sys::b3CreateHullShape(self.raw, &raw_def, &hull.base) })?;
@@ -246,6 +244,7 @@ mod tests {
             ShapeDef {
                 density: 1.0,
                 friction: 0.3,
+                ..ShapeDef::default()
             },
         );
 
@@ -280,6 +279,7 @@ mod tests {
             ShapeDef {
                 density: 1.0,
                 friction: 0.3,
+                ..ShapeDef::default()
             },
         );
 
@@ -303,6 +303,7 @@ mod tests {
             ShapeDef {
                 density: 1.0,
                 friction: 0.3,
+                ..ShapeDef::default()
             },
         );
 

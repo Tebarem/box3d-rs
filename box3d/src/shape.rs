@@ -36,6 +36,11 @@ impl From<sys::b3ShapeType> for ShapeType {
 pub struct ShapeDef {
     pub density: f32,
     pub friction: f32,
+    pub is_sensor: bool,
+    pub enable_sensor_events: bool,
+    pub enable_contact_events: bool,
+    pub enable_hit_events: bool,
+    pub enable_pre_solve_events: bool,
 }
 
 impl Default for ShapeDef {
@@ -43,6 +48,11 @@ impl Default for ShapeDef {
         Self {
             density: 0.0,
             friction: 0.6,
+            is_sensor: false,
+            enable_sensor_events: false,
+            enable_contact_events: false,
+            enable_hit_events: false,
+            enable_pre_solve_events: false,
         }
     }
 }
@@ -66,6 +76,10 @@ impl<'body> Shape<'body> {
 
     pub fn shape_type(&self) -> ShapeType {
         unsafe { sys::b3Shape_GetType(self.raw) }.into()
+    }
+
+    pub fn is_sensor(&self) -> bool {
+        unsafe { sys::b3Shape_IsSensor(self.raw) }
     }
 
     pub fn aabb(&self) -> Aabb {
@@ -191,6 +205,11 @@ pub(crate) fn raw_shape_def(def: ShapeDef) -> sys::b3ShapeDef {
     let mut raw_def = unsafe { sys::b3DefaultShapeDef() };
     raw_def.density = def.density;
     raw_def.baseMaterial.friction = def.friction;
+    raw_def.isSensor = def.is_sensor;
+    raw_def.enableSensorEvents = def.enable_sensor_events;
+    raw_def.enableContactEvents = def.enable_contact_events;
+    raw_def.enableHitEvents = def.enable_hit_events;
+    raw_def.enablePreSolveEvents = def.enable_pre_solve_events;
     raw_def
 }
 
@@ -212,6 +231,7 @@ mod tests {
             ShapeDef {
                 density: 1.0,
                 friction: 0.3,
+                ..ShapeDef::default()
             },
         );
 
@@ -223,6 +243,7 @@ mod tests {
             ShapeDef {
                 density: 1.0,
                 friction: 0.3,
+                ..ShapeDef::default()
             },
         );
 
@@ -244,6 +265,7 @@ mod tests {
             ShapeDef {
                 density: 1.0,
                 friction: 0.3,
+                ..ShapeDef::default()
             },
         );
 

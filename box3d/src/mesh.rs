@@ -168,6 +168,7 @@ mod tests {
             ShapeDef {
                 density: 1.0,
                 friction: 0.3,
+                ..ShapeDef::default()
             },
         );
 

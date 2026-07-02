@@ -1,7 +1,9 @@
 mod body;
+mod character;
 mod collision;
 mod compound;
 mod error;
+mod events;
 mod handle;
 mod hull;
 mod math;
@@ -11,12 +13,17 @@ mod shape;
 mod world;
 
 pub use body::{Body, BodyDef, BodyType};
+pub use character::{clip_vector, solve_planes, CollisionPlane, MoverCapsule};
 pub use collision::{
     compute_aabb, compute_mass, shape_cast, shape_distance, BoxShape, Capsule, DistanceOutput,
     ShapeCastOutput, SimpleShape, Sphere,
 };
 pub use compound::{Compound, CompoundPart};
 pub use error::{Error, Result};
+pub use events::{
+    BodyEvents, BodyId, BodyMoveEvent, ContactEvents, ContactHitEvent, ContactId,
+    ContactTouchEvent, JointEvent, JointEvents, JointId, SensorEvents, SensorTouchEvent, ShapeId,
+};
 pub use hull::{BoxHull, Hull, HullRef};
 pub use math::{Aabb, Filter, MassData, Matrix3, Quat, SurfaceMaterial, Transform, Vec3};
 pub use mesh::{HeightField, Mesh};
@@ -43,6 +50,7 @@ mod tests {
             ShapeDef {
                 density: 1.0,
                 friction: 0.3,
+                ..ShapeDef::default()
             },
         );
 
