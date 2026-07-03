@@ -5,8 +5,10 @@ use box3d_sys as sys;
 use crate::{
     body::{Body, BodyDef, BodyType},
     callbacks::CallbackState,
+    events::BodyId,
     handle,
-    math::{Aabb, Vec3},
+    math::{Aabb, Quat, Vec3},
+    tasks::MAX_WORKERS,
     Result,
 };
 
@@ -33,11 +35,22 @@ pub struct Capacity {
     pub contact_count: i32,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ContactTuning {
     pub hertz: f32,
     pub damping_ratio: f32,
     pub contact_speed: f32,
+}
+
+impl Default for ContactTuning {
+    fn default() -> Self {
+        let raw = unsafe { sys::b3DefaultWorldDef() };
+        Self {
+            hertz: raw.contactHertz,
+            damping_ratio: raw.contactDampingRatio,
+            contact_speed: raw.contactSpeed,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -105,8 +118,17 @@ impl World {
         Self::try_new(gravity).expect("box3d returned an invalid world")
     }
 
+    pub fn with_workers(gravity: Vec3, worker_count: u32) -> Self {
+        Self::try_new_with_workers(gravity, worker_count).expect("box3d returned an invalid world")
+    }
+
     pub fn with_capacity(gravity: Vec3, capacity: Capacity) -> Self {
         Self::try_with_capacity(gravity, capacity).expect("box3d returned an invalid world")
+    }
+
+    pub fn with_capacity_and_workers(gravity: Vec3, capacity: Capacity, worker_count: u32) -> Self {
+        Self::try_with_capacity_and_workers(gravity, capacity, worker_count)
+            .expect("box3d returned an invalid world")
     }
 
     pub(crate) fn raw(&self) -> sys::b3WorldId {
@@ -117,7 +139,19 @@ impl World {
         Self::try_with_capacity(gravity, Capacity::default())
     }
 
+    pub fn try_new_with_workers(gravity: Vec3, worker_count: u32) -> Result<Self> {
+        Self::try_with_capacity_and_workers(gravity, Capacity::default(), worker_count)
+    }
+
     pub fn try_with_capacity(gravity: Vec3, capacity: Capacity) -> Result<Self> {
+        Self::try_with_capacity_and_workers(gravity, capacity, 1)
+    }
+
+    pub fn try_with_capacity_and_workers(
+        gravity: Vec3,
+        capacity: Capacity,
+        worker_count: u32,
+    ) -> Result<Self> {
         if capacity.static_shape_count < 0
             || capacity.dynamic_shape_count < 0
             || capacity.static_body_count < 0
@@ -130,6 +164,7 @@ impl World {
         let mut def = unsafe { sys::b3DefaultWorldDef() };
         def.gravity = gravity.into();
         def.capacity = capacity.into();
+        def.workerCount = worker_count.clamp(1, MAX_WORKERS);
 
         let raw = handle::create_world(&def)?;
 
@@ -146,13 +181,47 @@ impl World {
     }
 
     pub fn try_create_body(&self, def: BodyDef) -> Result<Body<'_>> {
+        self.try_create_body_raw(def).map(Body::from_raw)
+    }
+
+    pub fn spawn_body(&self, def: BodyDef) -> BodyId {
+        self.try_spawn_body(def)
+            .expect("box3d returned an invalid body")
+    }
+
+    pub fn try_spawn_body(&self, def: BodyDef) -> Result<BodyId> {
+        self.try_create_body_raw(def).map(BodyId::from_raw)
+    }
+
+    fn try_create_body_raw(&self, def: BodyDef) -> Result<sys::b3BodyId> {
+        if !is_valid_vec3(def.position)
+            || !is_valid_quat(def.rotation)
+            || !is_valid_vec3(def.linear_velocity)
+            || !is_valid_vec3(def.angular_velocity)
+            || !is_non_negative_finite(def.linear_damping)
+            || !is_non_negative_finite(def.angular_damping)
+            || def
+                .sleep_threshold
+                .is_some_and(|value| !is_non_negative_finite(value))
+        {
+            return Err(crate::Error::InvalidInput);
+        }
+
         let mut raw_def = unsafe { sys::b3DefaultBodyDef() };
         raw_def.type_ = raw_body_type(def.body_type);
         raw_def.position = def.position.into();
+        raw_def.rotation = def.rotation.into();
+        raw_def.linearVelocity = def.linear_velocity.into();
+        raw_def.angularVelocity = def.angular_velocity.into();
+        raw_def.linearDamping = def.linear_damping;
+        raw_def.angularDamping = def.angular_damping;
+        if let Some(threshold) = def.sleep_threshold {
+            raw_def.sleepThreshold = threshold;
+        }
+        raw_def.userData = def.user_data as *mut c_void;
 
         let raw = handle::body(unsafe { sys::b3CreateBody(self.raw, &raw_def) })?;
-
-        Ok(Body::from_raw(raw))
+        Ok(raw)
     }
 
     pub fn step(&self, time_step: f32, sub_step_count: i32) {
@@ -428,6 +497,18 @@ fn raw_body_type(body_type: BodyType) -> sys::b3BodyType {
     }
 }
 
+fn is_valid_vec3(value: Vec3) -> bool {
+    value.x.is_finite() && value.y.is_finite() && value.z.is_finite()
+}
+
+fn is_valid_quat(value: Quat) -> bool {
+    is_valid_vec3(value.v) && value.s.is_finite()
+}
+
+fn is_non_negative_finite(value: f32) -> bool {
+    value.is_finite() && value >= 0.0
+}
+
 impl Default for World {
     fn default() -> Self {
         Self::new(Vec3::new(0.0, -10.0, 0.0))
@@ -531,6 +612,18 @@ mod tests {
     }
 
     #[test]
+    fn contact_tuning_default_matches_native_world_default() {
+        assert_eq!(
+            ContactTuning::default(),
+            ContactTuning {
+                hertz: 30.0,
+                damping_ratio: 10.0,
+                contact_speed: 3.0,
+            }
+        );
+    }
+
+    #[test]
     fn world_can_be_created_with_initial_capacity() {
         let capacity = Capacity {
             static_shape_count: 4,
@@ -552,6 +645,36 @@ mod tests {
             .err(),
             Some(crate::Error::InvalidInput)
         );
+    }
+
+    #[test]
+    fn world_can_be_created_with_workers() {
+        let world = World::with_workers(Vec3::ZERO, 2);
+        assert_eq!(world.worker_count(), 2);
+
+        let world = World::with_capacity_and_workers(Vec3::ZERO, Capacity::default(), 0);
+        assert_eq!(world.worker_count(), 1);
+
+        let world =
+            World::with_capacity_and_workers(Vec3::ZERO, Capacity::default(), MAX_WORKERS + 10);
+        assert_eq!(world.worker_count(), MAX_WORKERS);
+    }
+
+    #[test]
+    fn spawn_body_returns_copy_handle() {
+        let world = World::new(Vec3::ZERO);
+        let position = Vec3::new(1.0, 2.0, 3.0);
+        let rotation = Quat::new(Vec3::new(0.0, 0.70710677, 0.0), 0.70710677);
+        let body = world.spawn_body(BodyDef::kinematic_at(position).with_rotation(rotation));
+
+        assert!(body.is_valid());
+        assert_eq!(
+            body.transform(),
+            Some(crate::Transform::new(position, rotation))
+        );
+
+        body.destroy();
+        assert!(!body.is_valid());
     }
 
     #[test]

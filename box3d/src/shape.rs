@@ -42,25 +42,32 @@ impl From<sys::b3ShapeType> for ShapeType {
 pub struct ShapeDef {
     pub density: f32,
     pub friction: f32,
+    pub surface_material: Option<SurfaceMaterial>,
+    pub filter: Filter,
     pub is_sensor: bool,
     pub enable_sensor_events: bool,
     pub enable_contact_events: bool,
     pub enable_hit_events: bool,
     pub enable_pre_solve_events: bool,
     pub enable_custom_filtering: bool,
+    pub invoke_contact_creation: bool,
 }
 
 impl Default for ShapeDef {
     fn default() -> Self {
+        let raw = unsafe { sys::b3DefaultShapeDef() };
         Self {
-            density: 0.0,
-            friction: 0.6,
-            is_sensor: false,
-            enable_sensor_events: false,
-            enable_contact_events: false,
-            enable_hit_events: false,
-            enable_pre_solve_events: false,
-            enable_custom_filtering: false,
+            density: raw.density,
+            friction: raw.baseMaterial.friction,
+            surface_material: None,
+            filter: raw.filter.into(),
+            is_sensor: raw.isSensor,
+            enable_sensor_events: raw.enableSensorEvents,
+            enable_contact_events: raw.enableContactEvents,
+            enable_hit_events: raw.enableHitEvents,
+            enable_pre_solve_events: raw.enablePreSolveEvents,
+            enable_custom_filtering: raw.enableCustomFiltering,
+            invoke_contact_creation: raw.invokeContactCreation,
         }
     }
 }
@@ -340,13 +347,25 @@ impl Body<'_> {
 pub(crate) fn raw_shape_def(def: ShapeDef) -> sys::b3ShapeDef {
     let mut raw_def = unsafe { sys::b3DefaultShapeDef() };
     raw_def.density = def.density;
-    raw_def.baseMaterial.friction = def.friction;
+    raw_def.baseMaterial = match def.surface_material {
+        Some(material) => {
+            assert_valid_surface_material(material);
+            material.into()
+        }
+        None => {
+            let mut material = unsafe { sys::b3DefaultSurfaceMaterial() };
+            material.friction = def.friction;
+            material
+        }
+    };
+    raw_def.filter = def.filter.into();
     raw_def.isSensor = def.is_sensor;
     raw_def.enableSensorEvents = def.enable_sensor_events;
     raw_def.enableContactEvents = def.enable_contact_events;
     raw_def.enableHitEvents = def.enable_hit_events;
     raw_def.enablePreSolveEvents = def.enable_pre_solve_events;
     raw_def.enableCustomFiltering = def.enable_custom_filtering;
+    raw_def.invokeContactCreation = def.invoke_contact_creation;
     raw_def
 }
 
@@ -493,6 +512,41 @@ mod tests {
         assert!(shape.capsule().is_some());
         shape.set_hull(&hull);
         assert_eq!(shape.shape_type(), ShapeType::Hull);
+    }
+
+    #[test]
+    fn shape_def_surface_material_applies_at_creation() {
+        let world = World::new(Vec3::ZERO);
+        let body = world.create_body(BodyDef::dynamic_at(Vec3::ZERO));
+        let material = SurfaceMaterial {
+            friction: 0.75,
+            restitution: 0.35,
+            rolling_resistance: 0.03,
+            ..SurfaceMaterial::default()
+        };
+        let shape = body.create_sphere(
+            Vec3::ZERO,
+            0.5,
+            ShapeDef {
+                density: 1.0,
+                surface_material: Some(material),
+                ..ShapeDef::default()
+            },
+        );
+
+        assert_eq!(shape.surface_material(), material);
+        assert_eq!(shape.friction(), material.friction);
+        assert_eq!(shape.restitution(), material.restitution);
+    }
+
+    #[test]
+    fn shape_def_default_matches_native_dynamic_density() {
+        let def = ShapeDef::default();
+        assert!(def.density > 0.0);
+        assert_eq!(def.friction, SurfaceMaterial::default().friction);
+        assert_eq!(def.surface_material, None);
+        assert_eq!(def.filter, Filter::default());
+        assert!(def.invoke_contact_creation);
     }
 
     #[test]

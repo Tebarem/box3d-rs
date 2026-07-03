@@ -47,6 +47,13 @@ impl From<BodyType> for sys::b3BodyType {
 pub struct BodyDef {
     pub body_type: BodyType,
     pub position: Vec3,
+    pub rotation: Quat,
+    pub linear_velocity: Vec3,
+    pub angular_velocity: Vec3,
+    pub linear_damping: f32,
+    pub angular_damping: f32,
+    pub sleep_threshold: Option<f32>,
+    pub user_data: usize,
 }
 
 impl BodyDef {
@@ -54,14 +61,31 @@ impl BodyDef {
         Self {
             body_type: BodyType::Static,
             position,
+            rotation: Quat::IDENTITY,
+            linear_velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            linear_damping: 0.0,
+            angular_damping: 0.0,
+            sleep_threshold: None,
+            user_data: 0,
         }
     }
 
     pub const fn dynamic_at(position: Vec3) -> Self {
-        Self {
-            body_type: BodyType::Dynamic,
-            position,
-        }
+        let mut def = Self::static_at(position);
+        def.body_type = BodyType::Dynamic;
+        def
+    }
+
+    pub const fn kinematic_at(position: Vec3) -> Self {
+        let mut def = Self::static_at(position);
+        def.body_type = BodyType::Kinematic;
+        def
+    }
+
+    pub const fn with_rotation(mut self, rotation: Quat) -> Self {
+        self.rotation = rotation;
+        self
     }
 }
 
@@ -490,6 +514,33 @@ mod tests {
         assert_eq!(body.position(), position);
         assert_eq!(body.rotation(), Quat::IDENTITY);
         assert_eq!(body.transform(), Transform::new(position, Quat::IDENTITY));
+    }
+
+    #[test]
+    fn body_def_creation_fields_are_applied() {
+        let world = World::new(Vec3::ZERO);
+        let rotation = Quat::new(Vec3::new(0.0, 0.70710677, 0.0), 0.70710677);
+        let body = world.create_body(BodyDef {
+            body_type: BodyType::Dynamic,
+            position: Vec3::new(1.0, 2.0, 3.0),
+            rotation,
+            linear_velocity: Vec3::new(4.0, 0.0, 0.0),
+            angular_velocity: Vec3::new(0.0, 5.0, 0.0),
+            linear_damping: 0.25,
+            angular_damping: 0.5,
+            sleep_threshold: Some(0.75),
+            user_data: 0x1234,
+        });
+
+        assert_eq!(body.body_type(), BodyType::Dynamic);
+        assert_eq!(body.position(), Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(body.rotation(), rotation);
+        assert_eq!(body.linear_velocity(), Vec3::new(4.0, 0.0, 0.0));
+        assert_eq!(body.angular_velocity(), Vec3::new(0.0, 5.0, 0.0));
+        assert_eq!(body.linear_damping(), 0.25);
+        assert_eq!(body.angular_damping(), 0.5);
+        assert_eq!(body.sleep_threshold(), 0.75);
+        assert_eq!(body.user_data(), 0x1234);
     }
 
     #[test]

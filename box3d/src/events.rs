@@ -112,6 +112,17 @@ impl BodyId {
         unsafe { sys::b3Body_SetAngularDamping(self.raw, damping) };
     }
 
+    pub fn set_sleep_threshold(self, threshold: f32) {
+        assert!(threshold.is_finite() && threshold >= 0.0);
+        assert!(self.is_valid());
+        unsafe { sys::b3Body_SetSleepThreshold(self.raw, threshold) };
+    }
+
+    pub fn sleep_threshold(self) -> f32 {
+        assert!(self.is_valid());
+        unsafe { sys::b3Body_GetSleepThreshold(self.raw) }
+    }
+
     pub fn create_box(self, half_extents: Vec3, def: ShapeDef) -> ShapeId {
         self.try_create_box(half_extents, def)
             .expect("box3d returned an invalid shape")
@@ -336,6 +347,7 @@ pub struct BodyEvents<'world> {
 #[derive(Clone, Copy, Debug)]
 pub struct BodyMoveEvent {
     pub body: BodyId,
+    pub user_data: usize,
     pub transform: Transform,
     pub fell_asleep: bool,
 }
@@ -346,6 +358,7 @@ impl BodyEvents<'_> {
             .iter()
             .map(|event| BodyMoveEvent {
                 body: BodyId::from_raw(event.bodyId),
+                user_data: event.userData as usize,
                 transform: event.transform.into(),
                 fell_asleep: event.fellAsleep,
             })
@@ -597,21 +610,23 @@ mod tests {
             },
         );
 
+        body.set_user_data(0x1234);
         body.set_linear_velocity(Vec3::new(1.0, 0.0, 0.0));
         world.step(1.0 / 60.0, 4);
 
-        let moved = world
-            .body_events()
-            .moves()
-            .any(|event| event.body.is_valid() && event.transform.p.x > 0.0 && !event.fell_asleep);
+        let moved = world.body_events().moves().any(|event| {
+            event.body.is_valid()
+                && event.user_data == 0x1234
+                && event.transform.p.x > 0.0
+                && !event.fell_asleep
+        });
         assert!(moved);
     }
 
     #[test]
     fn body_id_methods_can_own_detached_body() {
         let world = World::new(Vec3::ZERO);
-        let body = world.create_body(BodyDef::dynamic_at(Vec3::ZERO));
-        let id = body.id();
+        let id = world.spawn_body(BodyDef::dynamic_at(Vec3::ZERO));
         let shape = id.create_sphere(
             Vec3::ZERO,
             0.5,
@@ -628,7 +643,6 @@ mod tests {
                 ..ShapeDef::default()
             },
         );
-        std::mem::forget(body);
 
         id.set_linear_velocity(Vec3::new(1.0, 0.0, 0.0));
         world.step(1.0 / 60.0, 4);

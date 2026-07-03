@@ -40,9 +40,11 @@ fn main() {
                 config: Box3dConfig {
                     fixed_hz: PHYSICS_TICK_RATE as f64,
                     sub_steps: PHYSICS_SUB_STEPS,
-                    continuous_enabled: false,
+                    sleeping_enabled: true,
+                    continuous_enabled: true,
                     ..default()
                 },
+                ..default()
             },
             Box3dDebugPlugin::default(),
         ))
@@ -84,29 +86,31 @@ fn setup(
 
     let cube_mesh = meshes.add(Cuboid::from_length(1.0));
     let cube_material = materials.add(Color::srgb(0.2, 0.55, 0.95));
+    let cube_collider = Collider::cuboid(HALF_EXTENTS)
+        .with_density(1.0)
+        .with_surface_material(SurfaceMaterial {
+            friction: BOX_FRICTION,
+            restitution: 0.0,
+            ..default()
+        });
 
-    for row in 0..10 {
-        let y = 0.5 + row as f32 * 1.05;
-        let x_offset = if row % 2 == 0 { -0.25 } else { 0.25 };
-        for col in 0..4 {
+    commands.spawn_batch((0..10).flat_map(move |row| {
+        let cube_mesh = cube_mesh.clone();
+        let cube_material = cube_material.clone();
+        (0..4).map(move |col| {
+            let y = 0.5 + row as f32 * 1.05;
+            let x_offset = if row % 2 == 0 { -0.25 } else { 0.25 };
             let x = (col as f32 - 1.5) * 1.05 + x_offset;
             let z = (row as f32 * 0.17).sin() * 0.2;
-
-            commands.spawn((
+            (
                 RigidBody::Dynamic,
-                Collider::cuboid(HALF_EXTENTS)
-                    .with_density(1.0)
-                    .with_surface_material(SurfaceMaterial {
-                        friction: BOX_FRICTION,
-                        restitution: 0.0,
-                        ..default()
-                    }),
+                cube_collider,
                 Mesh3d(cube_mesh.clone()),
                 MeshMaterial3d(cube_material.clone()),
                 Transform::from_xyz(x, y, z),
-            ));
-        }
-    }
+            )
+        })
+    }));
 
     commands.spawn((
         Text::new("stats"),
@@ -178,11 +182,28 @@ fn update_stats(
     let fps = diagnostic_average(&diagnostics, &FrameTimeDiagnosticsPlugin::FPS);
     let frame_ms = diagnostic_average(&diagnostics, &FrameTimeDiagnosticsPlugin::FRAME_TIME);
     let entities = diagnostic_average(&diagnostics, &EntityCountDiagnosticsPlugin::ENTITY_COUNT);
+    let profile = physics.native_profile;
 
     text.0 = format!(
-        "fps: {fps:.0}\nrender frame: {frame_ms:.2} ms\nphysics: {:.2} ms / {} steps\nfixed tick: {PHYSICS_TICK_RATE:.0} Hz x {PHYSICS_SUB_STEPS} substeps\ninterpolation: {:.2}\nphysics bodies: {}\nentities: {entities:.0}",
+        "fps: {fps:.0}\nrender frame: {frame_ms:.2} ms\nphysics: {:.2} ms native {:.2} ms / {} steps\nprofile: pairs {:.2} collide {:.2} solve {:.2} refit {:.2} sleep {:.2}\nsolver: setup {:.2} constraints {:.2} impulses {:.2} relax {:.2}\nintegrate: vel {:.2} pos {:.2} warm {:.2} rest {:.2}\nworkers: {} moves: {}\nfixed tick: {PHYSICS_TICK_RATE:.0} Hz x {PHYSICS_SUB_STEPS} substeps\ninterpolation: {:.2}\nphysics bodies: {}\nentities: {entities:.0}",
         physics.step_ms,
+        physics.native_step_ms,
         physics.step_count,
+        profile.pairs,
+        profile.collide,
+        profile.solve,
+        profile.refit,
+        profile.sleep_islands,
+        profile.solver_setup,
+        profile.constraints,
+        profile.solve_impulses,
+        profile.relax_impulses,
+        profile.integrate_velocities,
+        profile.integrate_positions,
+        profile.warm_start,
+        profile.apply_restitution,
+        physics.worker_count,
+        physics.move_event_count,
         physics.interpolation_alpha,
         physics.body_count
     );

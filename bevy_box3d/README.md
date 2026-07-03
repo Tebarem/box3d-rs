@@ -20,4 +20,4 @@ App::new()
     .run();
 ```
 
-Use `Box3dConfig::fixed_hz` and `sub_steps` for timing control. Order gameplay with `Box3dSet::{Sync, Step, Writeback}`. Add `Box3dDebugPlugin` for Bevy gizmo collider wireframes.
+Use `Box3dConfig::fixed_hz`, `sub_steps`, startup `worker_count`, `contact_tuning`, and `contact_recycle_distance` for timing, threading, and contact solver control. `Box3dPlugin::default()` runs Bevy's fixed schedules on one thread so Box3D's native workers are not starved; set `single_threaded_schedules: false` to opt out. Use `SleepThreshold` for per-body sleep tuning. Order gameplay with `Box3dSet::{Sync, Step, Writeback}`. Add `Box3dDebugPlugin` for Bevy gizmo collider wireframes.

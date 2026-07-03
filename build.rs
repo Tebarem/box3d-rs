@@ -46,7 +46,8 @@ fn build_from_source(box3d_dir: &std::path::Path) {
     println!("cargo:rerun-if-changed=vendor/box3d/include");
     println!("cargo:rerun-if-changed=vendor/box3d/src");
 
-    let dst = cmake::Config::new(box3d_dir)
+    let mut config = cmake::Config::new(box3d_dir);
+    config
         .profile("Release")
         .define("BUILD_SHARED_LIBS", "OFF")
         .define("BOX3D_BENCHMARKS", "OFF")
@@ -59,8 +60,16 @@ fn build_from_source(box3d_dir: &std::path::Path) {
         .define("BOX3D_SAMPLES", "OFF")
         .define("BOX3D_SANITIZE", "OFF")
         .define("BOX3D_UNIT_TESTS", "OFF")
-        .define("BOX3D_VALIDATE", "OFF")
-        .build();
+        .define("BOX3D_VALIDATE", "OFF");
+
+    let target = env::var("TARGET").unwrap();
+    if target.contains("msvc") {
+        config.cflag("/O2").cflag("/Ob2").cflag("/DNDEBUG");
+    } else {
+        config.cflag("-O3").cflag("-DNDEBUG");
+    }
+
+    let dst = config.build();
 
     let lib_dir = if dst.join("lib64").exists() {
         dst.join("lib64")
