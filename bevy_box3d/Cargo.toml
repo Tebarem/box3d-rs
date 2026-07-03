@@ -1,6 +1,6 @@
 [package]
 name = "bevy_box3d"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.95"
 autoexamples = false
@@ -17,7 +17,7 @@ bevy_gizmos = { version = "0.19.0" }
 bevy_math = { version = "0.19.0" }
 bevy_time = { version = "0.19.0" }
 bevy_transform = { version = "0.19.0" }
-box3d = { path = "../box3d", version = "0.1.14" }
+box3d = { path = "../box3d", version = "0.2.0" }
 
 [dev-dependencies]
 bevy = { version = "0.19.0", default-features = false, features = ["3d", "ui"] }

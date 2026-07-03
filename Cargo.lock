@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_box3d"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "bevy_app",
@@ -1866,14 +1866,14 @@ dependencies = [
 
 [[package]]
 name = "box3d"
-version = "0.1.14"
+version = "0.2.0"
 dependencies = [
  "box3d-sys",
 ]
 
 [[package]]
 name = "box3d-sys"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "bindgen",
  "cmake",
