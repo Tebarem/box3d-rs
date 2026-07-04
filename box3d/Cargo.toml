@@ -1,6 +1,6 @@
 [package]
 name = "box3d"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Safe Rust bindings for Box3D."
 license = "MIT"

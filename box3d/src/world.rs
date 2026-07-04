@@ -3,7 +3,7 @@ use std::{cell::Cell, ffi::c_void, marker::PhantomData, sync::Arc};
 use box3d_sys as sys;
 
 use crate::{
-    body::{Body, BodyDef, BodyType},
+    body::{Body, BodyCreateOptions, BodyDef, BodyType},
     callbacks::CallbackState,
     events::BodyId,
     handle,
@@ -181,7 +181,20 @@ impl World {
     }
 
     pub fn try_create_body(&self, def: BodyDef) -> Result<Body<'_>> {
-        self.try_create_body_raw(def).map(Body::from_raw)
+        self.try_create_body_with_options(def, BodyCreateOptions::default())
+    }
+
+    pub fn create_body_with_options(&self, def: BodyDef, options: BodyCreateOptions) -> Body<'_> {
+        self.try_create_body_with_options(def, options)
+            .expect("box3d returned an invalid body")
+    }
+
+    pub fn try_create_body_with_options(
+        &self,
+        def: BodyDef,
+        options: BodyCreateOptions,
+    ) -> Result<Body<'_>> {
+        self.try_create_body_raw(def, options).map(Body::from_raw)
     }
 
     pub fn spawn_body(&self, def: BodyDef) -> BodyId {
@@ -190,10 +203,27 @@ impl World {
     }
 
     pub fn try_spawn_body(&self, def: BodyDef) -> Result<BodyId> {
-        self.try_create_body_raw(def).map(BodyId::from_raw)
+        self.try_spawn_body_with_options(def, BodyCreateOptions::default())
     }
 
-    fn try_create_body_raw(&self, def: BodyDef) -> Result<sys::b3BodyId> {
+    pub fn spawn_body_with_options(&self, def: BodyDef, options: BodyCreateOptions) -> BodyId {
+        self.try_spawn_body_with_options(def, options)
+            .expect("box3d returned an invalid body")
+    }
+
+    pub fn try_spawn_body_with_options(
+        &self,
+        def: BodyDef,
+        options: BodyCreateOptions,
+    ) -> Result<BodyId> {
+        self.try_create_body_raw(def, options).map(BodyId::from_raw)
+    }
+
+    fn try_create_body_raw(
+        &self,
+        def: BodyDef,
+        options: BodyCreateOptions,
+    ) -> Result<sys::b3BodyId> {
         if !is_valid_vec3(def.position)
             || !is_valid_quat(def.rotation)
             || !is_valid_vec3(def.linear_velocity)
@@ -215,6 +245,7 @@ impl World {
         raw_def.angularVelocity = def.angular_velocity.into();
         raw_def.linearDamping = def.linear_damping;
         raw_def.angularDamping = def.angular_damping;
+        raw_def.allowFastRotation = options.allow_fast_rotation;
         if let Some(threshold) = def.sleep_threshold {
             raw_def.sleepThreshold = threshold;
         }

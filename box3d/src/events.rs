@@ -4,10 +4,11 @@ use box3d_sys as sys;
 
 use crate::{
     handle,
-    math::{SurfaceMaterial, Transform, Vec3},
+    math::{is_valid_transform, SurfaceMaterial, Transform, Vec3},
+    mesh::Mesh,
     shape::{raw_shape_def, ShapeDef},
     world::World,
-    Result,
+    Error, Result,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -78,6 +79,11 @@ impl BodyId {
 
     pub fn destroy(self) {
         handle::destroy_body(self.raw);
+    }
+
+    pub fn wake(self) {
+        assert!(self.is_valid());
+        unsafe { sys::b3Body_SetAwake(self.raw, true) };
     }
 
     pub fn transform(self) -> Option<Transform> {
@@ -182,6 +188,21 @@ impl BodyId {
         };
         handle::shape(unsafe { sys::b3CreateSphereShape(self.raw, &raw_def, &sphere) })
             .map(ShapeId::from_raw)
+    }
+
+    pub fn create_mesh(self, mesh: &Mesh, scale: Vec3, def: ShapeDef) -> ShapeId {
+        self.try_create_mesh(mesh, scale, def)
+            .expect("box3d returned an invalid shape")
+    }
+
+    pub fn try_create_mesh(self, mesh: &Mesh, scale: Vec3, def: ShapeDef) -> Result<ShapeId> {
+        assert!(self.is_valid());
+        assert!(scale.x.is_finite() && scale.y.is_finite() && scale.z.is_finite());
+        let raw_def = raw_shape_def(def);
+        handle::shape(unsafe {
+            sys::b3CreateMeshShape(self.raw, &raw_def, mesh.raw(), scale.into())
+        })
+        .map(ShapeId::from_raw)
     }
 }
 
@@ -329,6 +350,24 @@ impl JointId {
     pub fn is_valid(self) -> bool {
         handle::is_joint_valid(self.raw)
     }
+
+    pub fn destroy(self, wake_attached: bool) {
+        if self.is_valid() {
+            unsafe { sys::b3DestroyJoint(self.raw, wake_attached) };
+        }
+    }
+
+    pub fn set_wheel_spin_motor_speed(self, speed: f32) {
+        assert!(speed.is_finite());
+        assert!(self.is_valid());
+        unsafe { sys::b3WheelJoint_SetSpinMotorSpeed(self.raw, speed) };
+    }
+
+    pub fn set_wheel_target_steering_angle(self, radians: f32) {
+        assert!(radians.is_finite());
+        assert!(self.is_valid());
+        unsafe { sys::b3WheelJoint_SetTargetSteeringAngle(self.raw, radians) };
+    }
 }
 
 impl PartialEq for JointId {
@@ -338,6 +377,208 @@ impl PartialEq for JointId {
 }
 
 impl Eq for JointId {}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ParallelJointIdDef {
+    pub body_a: BodyId,
+    pub body_b: BodyId,
+    pub local_frame_a: Transform,
+    pub local_frame_b: Transform,
+    pub collide_connected: bool,
+    pub draw_scale: f32,
+    pub hertz: f32,
+    pub damping_ratio: f32,
+    pub max_torque: f32,
+}
+
+impl ParallelJointIdDef {
+    pub fn new(body_a: BodyId, body_b: BodyId) -> Self {
+        let raw = unsafe { sys::b3DefaultParallelJointDef() };
+        Self {
+            body_a,
+            body_b,
+            local_frame_a: raw.base.localFrameA.into(),
+            local_frame_b: raw.base.localFrameB.into(),
+            collide_connected: raw.base.collideConnected,
+            draw_scale: raw.base.drawScale,
+            hertz: raw.hertz,
+            damping_ratio: raw.dampingRatio,
+            max_torque: raw.maxTorque,
+        }
+    }
+
+    fn raw(self) -> Result<sys::b3ParallelJointDef> {
+        if !self.body_a.is_valid()
+            || !self.body_b.is_valid()
+            || !is_valid_transform(self.local_frame_a)
+            || !is_valid_transform(self.local_frame_b)
+            || !is_non_negative_finite(self.draw_scale)
+            || !is_non_negative_finite(self.hertz)
+            || !is_non_negative_finite(self.damping_ratio)
+            || !is_non_negative_finite(self.max_torque)
+        {
+            return Err(Error::InvalidInput);
+        }
+
+        let mut raw = unsafe { sys::b3DefaultParallelJointDef() };
+        raw.base.bodyIdA = self.body_a.raw;
+        raw.base.bodyIdB = self.body_b.raw;
+        raw.base.localFrameA = self.local_frame_a.into();
+        raw.base.localFrameB = self.local_frame_b.into();
+        raw.base.collideConnected = self.collide_connected;
+        raw.base.drawScale = self.draw_scale;
+        raw.hertz = self.hertz;
+        raw.dampingRatio = self.damping_ratio;
+        raw.maxTorque = self.max_torque;
+        Ok(raw)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct WheelJointIdDef {
+    pub body_a: BodyId,
+    pub body_b: BodyId,
+    pub local_frame_a: Transform,
+    pub local_frame_b: Transform,
+    pub collide_connected: bool,
+    pub draw_scale: f32,
+    pub enable_suspension_spring: bool,
+    pub suspension_hertz: f32,
+    pub suspension_damping_ratio: f32,
+    pub enable_suspension_limit: bool,
+    pub lower_suspension_limit: f32,
+    pub upper_suspension_limit: f32,
+    pub enable_spin_motor: bool,
+    pub max_spin_torque: f32,
+    pub spin_speed: f32,
+    pub enable_steering: bool,
+    pub steering_hertz: f32,
+    pub steering_damping_ratio: f32,
+    pub target_steering_angle: f32,
+    pub max_steering_torque: f32,
+    pub enable_steering_limit: bool,
+    pub lower_steering_limit: f32,
+    pub upper_steering_limit: f32,
+}
+
+impl WheelJointIdDef {
+    pub fn new(body_a: BodyId, body_b: BodyId) -> Self {
+        let raw = unsafe { sys::b3DefaultWheelJointDef() };
+        Self {
+            body_a,
+            body_b,
+            local_frame_a: raw.base.localFrameA.into(),
+            local_frame_b: raw.base.localFrameB.into(),
+            collide_connected: raw.base.collideConnected,
+            draw_scale: raw.base.drawScale,
+            enable_suspension_spring: raw.enableSuspensionSpring,
+            suspension_hertz: raw.suspensionHertz,
+            suspension_damping_ratio: raw.suspensionDampingRatio,
+            enable_suspension_limit: raw.enableSuspensionLimit,
+            lower_suspension_limit: raw.lowerSuspensionLimit,
+            upper_suspension_limit: raw.upperSuspensionLimit,
+            enable_spin_motor: raw.enableSpinMotor,
+            max_spin_torque: raw.maxSpinTorque,
+            spin_speed: raw.spinSpeed,
+            enable_steering: raw.enableSteering,
+            steering_hertz: raw.steeringHertz,
+            steering_damping_ratio: raw.steeringDampingRatio,
+            target_steering_angle: raw.targetSteeringAngle,
+            max_steering_torque: raw.maxSteeringTorque,
+            enable_steering_limit: raw.enableSteeringLimit,
+            lower_steering_limit: raw.lowerSteeringLimit,
+            upper_steering_limit: raw.upperSteeringLimit,
+        }
+    }
+
+    fn raw(self) -> Result<sys::b3WheelJointDef> {
+        if !self.body_a.is_valid()
+            || !self.body_b.is_valid()
+            || !is_valid_transform(self.local_frame_a)
+            || !is_valid_transform(self.local_frame_b)
+            || !self.draw_scale.is_finite()
+            || self.draw_scale < 0.0
+            || !is_non_negative_finite(self.suspension_hertz)
+            || !is_non_negative_finite(self.suspension_damping_ratio)
+            || !is_non_negative_finite(self.max_spin_torque)
+            || !self.spin_speed.is_finite()
+            || !is_non_negative_finite(self.steering_hertz)
+            || !is_non_negative_finite(self.steering_damping_ratio)
+            || !self.target_steering_angle.is_finite()
+            || !is_non_negative_finite(self.max_steering_torque)
+            || !finite_ordered(self.lower_suspension_limit, self.upper_suspension_limit)
+            || !finite_ordered(self.lower_steering_limit, self.upper_steering_limit)
+        {
+            return Err(Error::InvalidInput);
+        }
+
+        let mut raw = unsafe { sys::b3DefaultWheelJointDef() };
+        raw.base.bodyIdA = self.body_a.raw;
+        raw.base.bodyIdB = self.body_b.raw;
+        raw.base.localFrameA = self.local_frame_a.into();
+        raw.base.localFrameB = self.local_frame_b.into();
+        raw.base.collideConnected = self.collide_connected;
+        raw.base.drawScale = self.draw_scale;
+        raw.enableSuspensionSpring = self.enable_suspension_spring;
+        raw.suspensionHertz = self.suspension_hertz;
+        raw.suspensionDampingRatio = self.suspension_damping_ratio;
+        raw.enableSuspensionLimit = self.enable_suspension_limit;
+        raw.lowerSuspensionLimit = self.lower_suspension_limit;
+        raw.upperSuspensionLimit = self.upper_suspension_limit;
+        raw.enableSpinMotor = self.enable_spin_motor;
+        raw.maxSpinTorque = self.max_spin_torque;
+        raw.spinSpeed = self.spin_speed;
+        raw.enableSteering = self.enable_steering;
+        raw.steeringHertz = self.steering_hertz;
+        raw.steeringDampingRatio = self.steering_damping_ratio;
+        raw.targetSteeringAngle = self.target_steering_angle;
+        raw.maxSteeringTorque = self.max_steering_torque;
+        raw.enableSteeringLimit = self.enable_steering_limit;
+        raw.lowerSteeringLimit = self.lower_steering_limit;
+        raw.upperSteeringLimit = self.upper_steering_limit;
+        Ok(raw)
+    }
+}
+
+impl World {
+    pub fn create_parallel_joint_id(&self, def: ParallelJointIdDef) -> JointId {
+        self.try_create_parallel_joint_id(def)
+            .expect("box3d returned an invalid parallel joint")
+    }
+
+    pub fn try_create_parallel_joint_id(&self, def: ParallelJointIdDef) -> Result<JointId> {
+        let raw_def = def.raw()?;
+        let raw = unsafe { sys::b3CreateParallelJoint(self.raw(), &raw_def) };
+        valid_joint_id(raw)
+    }
+
+    pub fn create_wheel_joint_id(&self, def: WheelJointIdDef) -> JointId {
+        self.try_create_wheel_joint_id(def)
+            .expect("box3d returned an invalid wheel joint")
+    }
+
+    pub fn try_create_wheel_joint_id(&self, def: WheelJointIdDef) -> Result<JointId> {
+        let raw_def = def.raw()?;
+        let raw = unsafe { sys::b3CreateWheelJoint(self.raw(), &raw_def) };
+        valid_joint_id(raw)
+    }
+}
+
+fn valid_joint_id(raw: sys::b3JointId) -> Result<JointId> {
+    if handle::is_joint_valid(raw) {
+        Ok(JointId::from_raw(raw))
+    } else {
+        Err(Error::InvalidInput)
+    }
+}
+
+fn is_non_negative_finite(value: f32) -> bool {
+    value.is_finite() && value >= 0.0
+}
+
+fn finite_ordered(lower: f32, upper: f32) -> bool {
+    lower.is_finite() && upper.is_finite() && lower <= upper
+}
 
 pub struct BodyEvents<'world> {
     raw: sys::b3BodyEvents,
@@ -558,7 +799,7 @@ fn contact_end_event(event: &sys::b3ContactEndTouchEvent) -> ContactTouchEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BodyDef, ShapeDef};
+    use crate::{compute_quat_between_unit_vectors, BodyCreateOptions, BodyDef, Mesh, ShapeDef};
 
     #[test]
     fn ids_round_trip_through_stable_bits() {
@@ -627,6 +868,7 @@ mod tests {
     fn body_id_methods_can_own_detached_body() {
         let world = World::new(Vec3::ZERO);
         let id = world.spawn_body(BodyDef::dynamic_at(Vec3::ZERO));
+        let mesh = Mesh::box_mesh(Vec3::ZERO, Vec3::new(0.25, 0.25, 0.25), true);
         let shape = id.create_sphere(
             Vec3::ZERO,
             0.5,
@@ -643,16 +885,93 @@ mod tests {
                 ..ShapeDef::default()
             },
         );
+        let mesh_shape = id.create_mesh(&mesh, Vec3::new(1.0, 1.0, 1.0), ShapeDef::default());
 
         id.set_linear_velocity(Vec3::new(1.0, 0.0, 0.0));
         world.step(1.0 / 60.0, 4);
 
         assert!(shape.is_valid());
         assert!(box_shape.is_valid());
+        assert!(mesh_shape.is_valid());
         assert!(id.transform().unwrap().p.x > 0.0);
 
         id.destroy();
         assert!(!id.is_valid());
+    }
+
+    #[test]
+    fn detached_joint_ids_attach_spawned_bodies() {
+        let world = World::new(Vec3::ZERO);
+        let ground = world.spawn_body(BodyDef::static_at(Vec3::ZERO));
+        let chassis = world.spawn_body(BodyDef::dynamic_at(Vec3::new(0.0, 2.5, 0.0)));
+        let wheel = world.spawn_body_with_options(
+            BodyDef::dynamic_at(Vec3::new(1.5, 2.0, 0.8)),
+            BodyCreateOptions {
+                allow_fast_rotation: true,
+            },
+        );
+
+        let _ground_shape = ground.create_box(Vec3::new(10.0, 0.5, 10.0), ShapeDef::default());
+        let _chassis_shape = chassis.create_box(
+            Vec3::new(2.0, 0.5, 1.0),
+            ShapeDef {
+                density: 0.5,
+                ..ShapeDef::default()
+            },
+        );
+        let _wheel_shape = wheel.create_sphere(
+            Vec3::ZERO,
+            0.4,
+            ShapeDef {
+                density: 2.0,
+                friction: 3.0,
+                ..ShapeDef::default()
+            },
+        );
+
+        let upright_rotation =
+            compute_quat_between_unit_vectors(Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.0, 1.0, 0.0));
+        let mut upright_def = ParallelJointIdDef::new(ground, chassis);
+        upright_def.local_frame_a.q = upright_rotation;
+        upright_def.local_frame_b.q = upright_rotation;
+        upright_def.collide_connected = true;
+        upright_def.hertz = 0.5;
+        upright_def.damping_ratio = 1.0;
+        let upright = world.create_parallel_joint_id(upright_def);
+
+        let mut wheel_def = WheelJointIdDef::new(chassis, wheel);
+        wheel_def.local_frame_a = Transform::new(
+            Vec3::new(1.5, -0.5, 0.8),
+            compute_quat_between_unit_vectors(Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)),
+        );
+        wheel_def.local_frame_b.q =
+            compute_quat_between_unit_vectors(Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.0, 1.0, 0.0));
+        wheel_def.enable_suspension_limit = true;
+        wheel_def.lower_suspension_limit = -0.2;
+        wheel_def.upper_suspension_limit = 0.2;
+        wheel_def.enable_spin_motor = true;
+        wheel_def.max_spin_torque = 5.0;
+        wheel_def.enable_steering = true;
+        wheel_def.steering_hertz = 10.0;
+        wheel_def.steering_damping_ratio = 0.7;
+        wheel_def.max_steering_torque = 5.0;
+        wheel_def.enable_steering_limit = true;
+        wheel_def.lower_steering_limit = -std::f32::consts::FRAC_PI_4;
+        wheel_def.upper_steering_limit = std::f32::consts::FRAC_PI_4;
+
+        let wheel_joint = world.create_wheel_joint_id(wheel_def);
+        wheel_joint.set_wheel_target_steering_angle(0.1);
+        wheel_joint.set_wheel_spin_motor_speed(-30.0);
+        chassis.wake();
+        world.step(1.0 / 60.0, 4);
+
+        assert!(upright.is_valid());
+        assert!(wheel_joint.is_valid());
+
+        wheel_joint.destroy(true);
+        upright.destroy(true);
+        assert!(!wheel_joint.is_valid());
+        assert!(!upright.is_valid());
     }
 
     #[test]

@@ -27,7 +27,7 @@ pub use base::{
     milliseconds_and_reset, set_length_units_per_meter, set_stall_threshold, sleep,
     stall_threshold, ticks, version, yield_now, Version, HASH_INIT,
 };
-pub use body::{Body, BodyDef, BodyType, MotionLocks};
+pub use body::{Body, BodyCreateOptions, BodyDef, BodyType, MotionLocks};
 pub use callbacks::{FrictionCallback, PreSolveContact, RestitutionCallback};
 pub use character::{clip_vector, solve_planes, CollisionPlane, MoverCapsule};
 pub use collision::{
@@ -61,8 +61,8 @@ pub use dynamic_tree::{
 pub use error::{Error, Result};
 pub use events::{
     BodyEvents, BodyId, BodyMoveEvent, ContactEvents, ContactHitEvent, ContactId,
-    ContactTouchEvent, JointEvent, JointEvents, JointId, SensorEvents, SensorTouchEvent, ShapeId,
-    WorldId,
+    ContactTouchEvent, JointEvent, JointEvents, JointId, ParallelJointIdDef, SensorEvents,
+    SensorTouchEvent, ShapeId, WheelJointIdDef, WorldId,
 };
 pub use hull::{BoxHull, Hull, HullRef};
 pub use joint::{

@@ -12,10 +12,14 @@ use bevy_time::{Fixed, Time};
 
 use box3d::Vec3 as BoxVec3;
 use box3d::{
-    BodyDef, BodyId, BodyType, Capacity, ContactId, ContactTuning, Filter, Quat, ShapeDef, ShapeId,
-    SurfaceMaterial, Transform as BoxTransform, World,
+    BodyCreateOptions, BodyDef, BodyId, BodyType, Capacity, ContactId, ContactTuning, Filter,
+    Mesh as BoxMesh, MeshCreateOptions, Quat, ShapeDef, ShapeId, SurfaceMaterial,
+    Transform as BoxTransform, World,
 };
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 pub use bevy_math::Vec3;
 
@@ -273,7 +277,7 @@ impl From<RigidBody> for BodyType {
 }
 
 /// Bevy collider component.
-#[derive(Clone, Copy, Debug, Component)]
+#[derive(Clone, Debug, Component)]
 pub struct Collider {
     shape: ColliderShape,
     def: ShapeDef,
@@ -283,10 +287,19 @@ pub struct Collider {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Component)]
 pub struct ColliderParent(pub Entity);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 enum ColliderShape {
     Cuboid { half_extents: Vec3 },
     Sphere { radius: f32 },
+    Mesh { data: Arc<MeshColliderData> },
+}
+
+#[derive(Clone, Debug)]
+struct MeshColliderData {
+    vertices: Arc<[BoxVec3]>,
+    indices: Arc<[u32]>,
+    scale: Vec3,
+    options: MeshCreateOptions,
 }
 
 impl Collider {
@@ -300,6 +313,34 @@ impl Collider {
     pub fn sphere(radius: f32) -> Self {
         Self {
             shape: ColliderShape::Sphere { radius },
+            def: ShapeDef::default(),
+        }
+    }
+
+    pub fn mesh(vertices: Vec<Vec3>, indices: Vec<u32>) -> Self {
+        Self::mesh_with_options(vertices, indices, Vec3::ONE, MeshCreateOptions::default())
+    }
+
+    pub fn mesh_with_options(
+        vertices: Vec<Vec3>,
+        indices: Vec<u32>,
+        scale: Vec3,
+        options: MeshCreateOptions,
+    ) -> Self {
+        let vertices = vertices
+            .into_iter()
+            .map(to_box3d_vec3)
+            .collect::<Vec<_>>()
+            .into();
+        Self {
+            shape: ColliderShape::Mesh {
+                data: Arc::new(MeshColliderData {
+                    vertices,
+                    indices: indices.into(),
+                    scale,
+                    options,
+                }),
+            },
             def: ShapeDef::default(),
         }
     }
@@ -377,6 +418,10 @@ pub struct Damping {
     pub angular: f32,
 }
 
+/// Allow higher angular velocity for small dynamic bodies such as vehicle wheels.
+#[derive(Clone, Copy, Debug, Default, Component)]
+pub struct FastRotation;
+
 /// Sleep speed threshold synced into Box3D for this body.
 #[derive(Clone, Copy, Debug, PartialEq, Component)]
 pub struct SleepThreshold(pub f32);
@@ -405,6 +450,7 @@ pub struct Box3dWorld {
     shape_bodies: HashMap<Entity, Entity>,
     shape_entities: HashMap<u64, Entity>,
     event_shapes: HashSet<Entity>,
+    mesh_colliders: HashMap<Entity, BoxMesh>,
     interpolating: Vec<(Entity, InterpolatedTransform)>,
 }
 
@@ -454,6 +500,7 @@ impl Box3dWorld {
             shape_bodies: HashMap::with_capacity(shape_capacity),
             shape_entities: HashMap::with_capacity(shape_capacity),
             event_shapes: HashSet::new(),
+            mesh_colliders: HashMap::new(),
             interpolating: Vec::with_capacity(dynamic_body_capacity),
         }
     }
@@ -492,6 +539,7 @@ impl Box3dWorld {
             }
         }
         self.event_shapes.remove(&entity);
+        self.mesh_colliders.remove(&entity);
         self.shape_bodies.remove(&entity);
     }
 
@@ -518,6 +566,7 @@ impl Drop for Box3dWorld {
         self.shape_bodies.clear();
         self.shape_entities.clear();
         self.event_shapes.clear();
+        self.mesh_colliders.clear();
         self.interpolating.clear();
     }
 }
@@ -533,6 +582,7 @@ fn create_box3d_bodies(
             Option<&bevy_transform::prelude::Transform>,
             Option<&Velocity>,
             Option<&Damping>,
+            Option<&FastRotation>,
             Option<&SleepThreshold>,
             Option<&Collider>,
             Option<&ColliderParent>,
@@ -540,28 +590,42 @@ fn create_box3d_bodies(
         bevy_ecs::prelude::Without<Box3dBody>,
     >,
 ) {
-    for (entity, rigid_body, transform, velocity, damping, sleep_threshold, collider, parent) in
-        &query
+    for (
+        entity,
+        rigid_body,
+        transform,
+        velocity,
+        damping,
+        fast_rotation,
+        sleep_threshold,
+        collider,
+        parent,
+    ) in &query
     {
         let start = transform
             .map(bevy_transform_to_box3d)
             .unwrap_or(BoxTransform::IDENTITY);
 
-        let body_id = physics.world.spawn_body(BodyDef {
-            body_type: (*rigid_body).into(),
-            position: start.p,
-            rotation: start.q,
-            linear_velocity: velocity
-                .map(|velocity| to_box3d_vec3(velocity.linear))
-                .unwrap_or(BoxVec3::ZERO),
-            angular_velocity: velocity
-                .map(|velocity| to_box3d_vec3(velocity.angular))
-                .unwrap_or(BoxVec3::ZERO),
-            linear_damping: damping.map(|damping| damping.linear).unwrap_or(0.0),
-            angular_damping: damping.map(|damping| damping.angular).unwrap_or(0.0),
-            sleep_threshold: sleep_threshold.and_then(valid_sleep_threshold),
-            user_data: entity_user_data(entity),
-        });
+        let body_id = physics.world.spawn_body_with_options(
+            BodyDef {
+                body_type: (*rigid_body).into(),
+                position: start.p,
+                rotation: start.q,
+                linear_velocity: velocity
+                    .map(|velocity| to_box3d_vec3(velocity.linear))
+                    .unwrap_or(BoxVec3::ZERO),
+                angular_velocity: velocity
+                    .map(|velocity| to_box3d_vec3(velocity.angular))
+                    .unwrap_or(BoxVec3::ZERO),
+                linear_damping: damping.map(|damping| damping.linear).unwrap_or(0.0),
+                angular_damping: damping.map(|damping| damping.angular).unwrap_or(0.0),
+                sleep_threshold: sleep_threshold.and_then(valid_sleep_threshold),
+                user_data: entity_user_data(entity),
+            },
+            BodyCreateOptions {
+                allow_fast_rotation: fast_rotation.is_some(),
+            },
+        );
         physics.bodies.insert(entity, body_id);
         physics.body_entities.insert(body_id.to_bits(), entity);
         let mut entity_commands = commands.entity(entity);
@@ -576,7 +640,13 @@ fn create_box3d_bodies(
         }
 
         if let (Some(collider), None) = (collider, parent) {
-            let shape = create_box3d_shape(body_id, collider, BoxTransform::IDENTITY, false);
+            let shape = create_box3d_shape(
+                &mut physics,
+                entity,
+                body_id,
+                collider,
+                BoxTransform::IDENTITY,
+            );
             track_box3d_shape(&mut physics, entity, entity, shape, collider);
             entity_commands.insert(Box3dShape { id: shape });
         }
@@ -615,32 +685,48 @@ fn create_box3d_shapes(
                 .unwrap_or(BoxTransform::IDENTITY)
         };
 
-        let shape = create_box3d_shape(body, collider, local_transform, entity != body_entity);
+        let shape = create_box3d_shape(&mut physics, entity, body, collider, local_transform);
         track_box3d_shape(&mut physics, entity, body_entity, shape, collider);
         commands.entity(entity).insert(Box3dShape { id: shape });
     }
 }
 
 fn create_box3d_shape(
+    physics: &mut Box3dWorld,
+    entity: Entity,
     body: BodyId,
     collider: &Collider,
     local_transform: BoxTransform,
-    is_child_collider: bool,
 ) -> ShapeId {
-    match collider.shape {
+    match &collider.shape {
         ColliderShape::Cuboid { half_extents } => {
-            if is_child_collider {
+            if local_transform != BoxTransform::IDENTITY {
                 body.create_transformed_box(
-                    to_box3d_vec3(half_extents),
+                    to_box3d_vec3(*half_extents),
                     local_transform,
                     collider.def,
                 )
             } else {
-                body.create_box(to_box3d_vec3(half_extents), collider.def)
+                body.create_box(to_box3d_vec3(*half_extents), collider.def)
             }
         }
         ColliderShape::Sphere { radius } => {
-            body.create_sphere(local_transform.p, radius, collider.def)
+            body.create_sphere(local_transform.p, *radius, collider.def)
+        }
+        ColliderShape::Mesh { data } => {
+            let mesh = BoxMesh::from_triangles_with_options(
+                &data.vertices,
+                &data.indices,
+                None,
+                data.options,
+            )
+            .expect("invalid box3d mesh collider");
+            physics.mesh_colliders.insert(entity, mesh);
+            let mesh = physics
+                .mesh_colliders
+                .get(&entity)
+                .expect("box3d mesh collider was just inserted");
+            body.create_mesh(mesh, to_box3d_vec3(data.scale), collider.def)
         }
     }
 }
@@ -1114,19 +1200,20 @@ fn draw_box3d_colliders(
             config.collider_color
         };
 
-        match collider.shape {
+        match &collider.shape {
             ColliderShape::Cuboid { half_extents } => {
                 let mut cube = transform;
-                cube.scale = half_extents * 2.0;
+                cube.scale = *half_extents * 2.0;
                 gizmos.cube(cube, color);
             }
             ColliderShape::Sphere { radius } => {
                 gizmos.sphere(
                     Isometry3d::new(transform.translation, transform.rotation),
-                    radius,
+                    *radius,
                     color,
                 );
             }
+            ColliderShape::Mesh { .. } => {}
         }
     }
 }
@@ -1524,6 +1611,39 @@ mod tests {
         assert_eq!(physics.bodies.len(), 1);
         assert_eq!(physics.shapes.len(), 2);
         assert_eq!(physics.shape_bodies.get(&child), Some(&body));
+    }
+
+    #[test]
+    fn mesh_collider_keeps_native_mesh_alive() {
+        let mut app = bevy_app::App::new();
+        app.add_plugins(bevy_time::TimePlugin)
+            .insert_resource(bevy_time::TimeUpdateStrategy::FixedTimesteps(1));
+        app.add_plugins(Box3dPlugin::default());
+
+        let terrain = app
+            .world_mut()
+            .spawn((
+                RigidBody::Static,
+                Collider::mesh(
+                    vec![
+                        Vec3::new(-1.0, 0.0, -1.0),
+                        Vec3::new(1.0, 0.0, -1.0),
+                        Vec3::new(-1.0, 0.0, 1.0),
+                        Vec3::new(1.0, 0.0, 1.0),
+                    ],
+                    vec![0, 2, 1, 1, 2, 3],
+                ),
+                bevy_transform::prelude::Transform::default(),
+            ))
+            .id();
+
+        for _ in 0..3 {
+            app.update();
+        }
+
+        let physics = app.world().non_send::<Box3dWorld>();
+        assert_eq!(physics.mesh_colliders.len(), 1);
+        assert!(physics.shapes.get(&terrain).unwrap().is_valid());
     }
 
     #[test]

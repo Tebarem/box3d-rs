@@ -474,7 +474,7 @@ fn spawn_ball_batch(
         app.world_mut().spawn_batch((0..ball_count).map(move |i| {
             (
                 RigidBody::Dynamic,
-                collider,
+                collider.clone(),
                 damping,
                 SleepThreshold(threshold),
                 Transform::from_translation(ball_spawn_position(start_index + i)),
@@ -484,7 +484,7 @@ fn spawn_ball_batch(
         app.world_mut().spawn_batch((0..ball_count).map(move |i| {
             (
                 RigidBody::Dynamic,
-                collider,
+                collider.clone(),
                 damping,
                 Transform::from_translation(ball_spawn_position(start_index + i)),
             )

@@ -307,7 +307,7 @@ fn spawn_balls(
     commands.spawn_batch((0..BALLS_PER_CLICK).map(move |i| {
         (
             RigidBody::Dynamic,
-            collider,
+            collider.clone(),
             damping,
             Mesh3d(ball_mesh.clone()),
             MeshMaterial3d(ball_material.clone()),

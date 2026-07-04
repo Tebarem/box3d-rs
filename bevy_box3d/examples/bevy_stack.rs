@@ -97,6 +97,7 @@ fn setup(
     commands.spawn_batch((0..10).flat_map(move |row| {
         let cube_mesh = cube_mesh.clone();
         let cube_material = cube_material.clone();
+        let cube_collider = cube_collider.clone();
         (0..4).map(move |col| {
             let y = 0.5 + row as f32 * 1.05;
             let x_offset = if row % 2 == 0 { -0.25 } else { 0.25 };
@@ -104,7 +105,7 @@ fn setup(
             let z = (row as f32 * 0.17).sin() * 0.2;
             (
                 RigidBody::Dynamic,
-                cube_collider,
+                cube_collider.clone(),
                 Mesh3d(cube_mesh.clone()),
                 MeshMaterial3d(cube_material.clone()),
                 Transform::from_xyz(x, y, z),

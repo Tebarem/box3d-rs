@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_box3d"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bevy",
  "bevy_app",
@@ -1866,7 +1866,7 @@ dependencies = [
 
 [[package]]
 name = "box3d"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "box3d-sys",
 ]

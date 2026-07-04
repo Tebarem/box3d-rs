@@ -95,6 +95,11 @@ impl Default for BodyDef {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BodyCreateOptions {
+    pub allow_fast_rotation: bool,
+}
+
 pub struct Body<'world> {
     raw: sys::b3BodyId,
     _world: PhantomData<&'world World>,
