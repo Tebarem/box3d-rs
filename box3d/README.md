@@ -26,6 +26,6 @@ Feature groups include worlds/bodies/shapes, queries and standalone collision he
 Use the separate `bevy_box3d` crate for Bevy integration. The core `box3d` crate has no Bevy dependency.
 
 ```toml
-box3d = "0.1"
-bevy_box3d = "0.1"
+box3d = "0.2"
+bevy_box3d = "0.3"
 ```

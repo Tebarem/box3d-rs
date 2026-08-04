@@ -1,6 +1,6 @@
 [package]
 name = "box3d"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Safe Rust bindings for Box3D."
 license = "MIT"
@@ -12,4 +12,4 @@ default = []
 double-precision = ["box3d-sys/double-precision"]
 
 [dependencies]
-box3d-sys = { path = "..", version = "0.1.15" }
+box3d-sys = { path = "..", version = "0.1.16" }
