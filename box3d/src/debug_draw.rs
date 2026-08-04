@@ -50,12 +50,11 @@ pub struct DebugDrawOptions {
     pub draw_mass: bool,
     pub draw_body_names: bool,
     pub draw_contacts: bool,
-    pub draw_anchor_a: i32,
+    pub draw_anchor_a: bool,
     pub draw_graph_colors: bool,
     pub draw_contact_features: bool,
     pub draw_contact_normals: bool,
     pub draw_contact_forces: bool,
-    pub draw_friction_forces: bool,
     pub draw_islands: bool,
 }
 
@@ -78,7 +77,6 @@ impl Default for DebugDrawOptions {
             draw_contact_features: raw.drawContactFeatures,
             draw_contact_normals: raw.drawContactNormals,
             draw_contact_forces: raw.drawContactForces,
-            draw_friction_forces: raw.drawFrictionForces,
             draw_islands: raw.drawIslands,
         }
     }
@@ -101,7 +99,6 @@ impl DebugDrawOptions {
         raw.drawContactFeatures = self.draw_contact_features;
         raw.drawContactNormals = self.draw_contact_normals;
         raw.drawContactForces = self.draw_contact_forces;
-        raw.drawFrictionForces = self.draw_friction_forces;
         raw.drawIslands = self.draw_islands;
     }
 }
@@ -225,13 +222,13 @@ unsafe extern "C" fn draw_shape<D: DebugDraw>(
     transform: sys::b3WorldTransform,
     color: sys::b3HexColor,
     context: *mut c_void,
-) -> bool {
-    with_draw::<D, _>(context, false, |draw| {
-        match DebugShapeHandle::from_ptr(user_shape) {
+) {
+    with_draw::<D, _>(context, (), |draw| {
+        let _ = match DebugShapeHandle::from_ptr(user_shape) {
             Some(handle) => draw.draw_shape_with_handle(handle, transform.into(), color as u32),
             None => draw.draw_shape(transform.into(), color as u32),
-        }
-    })
+        };
+    });
 }
 
 unsafe extern "C" fn draw_segment<D: DebugDraw>(
@@ -453,7 +450,7 @@ mod tests {
             panic: None,
         };
 
-        let ok = unsafe {
+        unsafe {
             draw_shape::<Collector>(
                 std::ptr::dangling_mut(),
                 Transform::IDENTITY.into(),
@@ -462,7 +459,6 @@ mod tests {
             )
         };
 
-        assert!(ok);
         assert_eq!(draw.shapes, 1);
     }
 }

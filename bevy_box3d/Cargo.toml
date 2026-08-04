@@ -9,6 +9,10 @@ license = "MIT"
 readme = "README.md"
 repository = "https://github.com/Tebarem/box3d-rs"
 
+[features]
+default = []
+double-precision = ["box3d/double-precision"]
+
 [dependencies]
 bevy_app = { version = "0.19.0" }
 bevy_color = { version = "0.19.0" }

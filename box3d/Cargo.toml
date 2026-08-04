@@ -9,6 +9,7 @@ repository = "https://github.com/Tebarem/box3d-rs"
 
 [features]
 default = []
+double-precision = ["box3d-sys/double-precision"]
 
 [dependencies]
 box3d-sys = { path = "..", version = "0.1.15" }

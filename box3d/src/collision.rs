@@ -153,6 +153,24 @@ impl ShapeCastOutput {
             material_index: value.materialIndex,
         })
     }
+
+    #[cfg(not(box3d_double_precision))]
+    pub(crate) fn from_world_raw(value: sys::b3WorldCastOutput) -> Option<Self> {
+        Self::from_raw(value)
+    }
+
+    #[cfg(box3d_double_precision)]
+    pub(crate) fn from_world_raw(value: sys::b3WorldCastOutput) -> Option<Self> {
+        value.hit.then(|| Self {
+            normal: value.normal.into(),
+            point: value.point.into(),
+            fraction: value.fraction,
+            iterations: value.iterations,
+            triangle_index: value.triangleIndex,
+            child_index: value.childIndex,
+            material_index: value.materialIndex,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -930,11 +948,11 @@ pub fn collide_capsule_and_triangle(capsule_a: Capsule, triangle_b: [Vec3; 3]) -
     let triangle_b = raw_triangle(triangle_b);
     let mut cache = sys::b3SimplexCache::default();
     with_local_manifold(|manifold, capacity| unsafe {
-        sys::b3CollideCapsuleAndTriangle(
+        sys::b3CollideTriangleAndCapsule(
             manifold,
             capacity,
-            &capsule_a,
             triangle_b.as_ptr(),
+            &capsule_a,
             &mut cache,
         )
     })
@@ -949,15 +967,16 @@ pub fn collide_hull_and_triangle<'a>(
     let triangle_b = raw_triangle(triangle_b);
     let mut cache = sys::b3SATCache::default();
     with_local_manifold(|manifold, capacity| unsafe {
-        sys::b3CollideHullAndTriangle(
+        sys::b3CollideTriangleAndHull(
             manifold,
             capacity,
-            hull_a,
             triangle_b[0],
             triangle_b[1],
             triangle_b[2],
             triangle_flags.bits(),
+            hull_a,
             &mut cache,
+            true,
         )
     })
 }
@@ -966,7 +985,7 @@ pub fn collide_sphere_and_triangle(sphere_a: Sphere, triangle_b: [Vec3; 3]) -> L
     let sphere_a = sphere_a.raw();
     let triangle_b = raw_triangle(triangle_b);
     with_local_manifold(|manifold, capacity| unsafe {
-        sys::b3CollideSphereAndTriangle(manifold, capacity, &sphere_a, triangle_b.as_ptr())
+        sys::b3CollideTriangleAndSphere(manifold, capacity, triangle_b.as_ptr(), &sphere_a)
     })
 }
 

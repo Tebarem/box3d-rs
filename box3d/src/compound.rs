@@ -377,7 +377,7 @@ impl Body<'_> {
     pub fn create_compound<'a>(&'a self, compound: &'a Compound, def: ShapeDef) -> Shape<'a> {
         let mut raw_def = raw_shape_def(def);
         let raw = handle::shape(unsafe {
-            sys::b3CreateCompoundShape(self.raw(), &mut raw_def, compound.raw())
+            sys::b3CreateBakedCompoundShape(self.raw(), &mut raw_def, compound.raw())
         })
         .expect("box3d returned an invalid shape");
 

@@ -14,7 +14,15 @@ cargo test
 
 The default `build-from-source` feature compiles the vendored Box3D C library with CMake and generates bindings from `include/box3d/box3d.h` with bindgen.
 
-Disable default features to link an installed `box3d` instead. Set `BOX3D_INCLUDE_DIR` and `BOX3D_LIB_DIR` when the headers or library are outside the toolchain search paths.
+Enable the `double-precision` feature to build Box3D with `BOX3D_DOUBLE_PRECISION`:
+
+```sh
+cargo test --workspace --features double-precision
+```
+
+This exposes double-precision world positions through `box3d-sys`; the safe `box3d` API keeps its existing `f32` position types.
+
+Disable default features to link an installed `box3d` instead. Set `BOX3D_INCLUDE_DIR` and `BOX3D_LIB_DIR` when the headers or library are outside the toolchain search paths. The installed headers and library must use the same precision mode.
 
 You need CMake, a C/C++ toolchain, and libclang available to bindgen.
 

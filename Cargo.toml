@@ -26,6 +26,7 @@ resolver = "2"
 [features]
 default = ["build-from-source"]
 build-from-source = ["dep:cmake"]
+double-precision = []
 
 [dependencies]
 

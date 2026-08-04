@@ -385,21 +385,6 @@ impl World {
         unsafe { sys::b3World_DumpMemoryStats(self.raw) };
     }
 
-    /// Writes `box3d_bounds.txt` in the current process working directory.
-    pub fn dump_shape_bounds(&self, body_type: BodyType) {
-        unsafe { sys::b3World_DumpShapeBounds(self.raw, raw_body_type(body_type)) };
-    }
-
-    /// Writes `box3d_dump.inl` in the current process working directory.
-    pub fn dump_awake(&self) {
-        unsafe { sys::b3World_DumpAwake(self.raw) };
-    }
-
-    /// Writes `box3d_dump.inl` and any native mesh dump files in the current process working directory.
-    pub fn dump(&self) {
-        unsafe { sys::b3World_Dump(self.raw) };
-    }
-
     pub fn counters(&self) -> Counters {
         unsafe { sys::b3World_GetCounters(self.raw) }.into()
     }
@@ -559,13 +544,6 @@ impl Drop for World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-        sync::Mutex,
-    };
-
-    static CWD_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn settings_and_diagnostics_work_on_empty_world() {
@@ -706,51 +684,5 @@ mod tests {
 
         body.destroy();
         assert!(!body.is_valid());
-    }
-
-    #[test]
-    fn dump_diagnostics_write_native_files_in_current_directory() {
-        let _guard = CWD_LOCK.lock().expect("world dump cwd mutex poisoned");
-        let world = World::default();
-        let dir = temp_dump_dir();
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create dump temp dir");
-
-        let cwd = CurrentDirGuard::enter(&dir);
-
-        world.dump_shape_bounds(BodyType::Static);
-        assert!(Path::new("box3d_bounds.txt").exists());
-
-        world.dump_awake();
-        assert!(Path::new("box3d_dump.inl").exists());
-
-        fs::remove_file("box3d_dump.inl").expect("remove awake dump");
-        world.dump();
-        assert!(Path::new("box3d_dump.inl").exists());
-
-        drop(cwd);
-        fs::remove_dir_all(&dir).expect("remove dump temp dir");
-    }
-
-    fn temp_dump_dir() -> PathBuf {
-        std::env::temp_dir().join(format!("box3d-rs-world-dumps-{}", std::process::id()))
-    }
-
-    struct CurrentDirGuard {
-        previous: PathBuf,
-    }
-
-    impl CurrentDirGuard {
-        fn enter(path: &Path) -> Self {
-            let previous = std::env::current_dir().expect("read current dir");
-            std::env::set_current_dir(path).expect("enter dump temp dir");
-            Self { previous }
-        }
-    }
-
-    impl Drop for CurrentDirGuard {
-        fn drop(&mut self) {
-            let _ = std::env::set_current_dir(&self.previous);
-        }
     }
 }

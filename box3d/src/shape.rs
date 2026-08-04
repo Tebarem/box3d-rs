@@ -284,7 +284,7 @@ impl<'body> Shape<'body> {
     pub fn ray_cast(&self, origin: Vec3, translation: Vec3) -> Option<ShapeCastOutput> {
         assert_valid_vec3(origin);
         assert_valid_vec3(translation);
-        ShapeCastOutput::from_raw(unsafe {
+        ShapeCastOutput::from_world_raw(unsafe {
             sys::b3Shape_RayCast(self.raw, origin.into(), translation.into())
         })
     }

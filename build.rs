@@ -8,6 +8,10 @@ fn main() {
         .unwrap_or_else(|| box3d_dir.join("include"));
 
     println!("cargo:rerun-if-changed=wrapper.h");
+    println!(
+        "cargo:double_precision={}",
+        cfg!(feature = "double-precision")
+    );
 
     #[cfg(feature = "build-from-source")]
     build_from_source(&box3d_dir);
@@ -20,14 +24,20 @@ fn main() {
         println!("cargo:rustc-link-lib=m");
     }
 
-    let bindings = bindgen::Builder::default()
+    let mut bindings = bindgen::Builder::default()
         .header("wrapper.h")
         .clang_arg(format!("-I{}", include_dir.display()))
         .allowlist_function("b3.*")
         .allowlist_type("b3.*")
         .allowlist_var("b3.*")
         .allowlist_var("B3.*")
-        .derive_default(true)
+        .derive_default(true);
+
+    if cfg!(feature = "double-precision") {
+        bindings = bindings.clang_arg("-DBOX3D_DOUBLE_PRECISION");
+    }
+
+    let bindings = bindings
         .generate()
         .expect("failed to generate Box3D bindings");
 
@@ -55,7 +65,14 @@ fn build_from_source(box3d_dir: &std::path::Path) {
         .define("BOX3D_COMPILE_WARNING_AS_ERROR", "OFF")
         .define("BOX3D_DISABLE_SIMD", "OFF")
         .define("BOX3D_DOCS", "OFF")
-        .define("BOX3D_DOUBLE_PRECISION", "OFF")
+        .define(
+            "BOX3D_DOUBLE_PRECISION",
+            if cfg!(feature = "double-precision") {
+                "ON"
+            } else {
+                "OFF"
+            },
+        )
         .define("BOX3D_PROFILE", "OFF")
         .define("BOX3D_SAMPLES", "OFF")
         .define("BOX3D_SANITIZE", "OFF")

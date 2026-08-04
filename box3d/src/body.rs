@@ -170,10 +170,6 @@ impl<'world> Body<'world> {
     }
 
     pub fn set_name(&self, name: &str) -> Result<()> {
-        if name.len() >= sys::B3_BODY_NAME_LENGTH as usize {
-            return Err(crate::Error::InvalidInput);
-        }
-
         let name = CString::new(name).map_err(|_| crate::Error::InvalidInput)?;
         unsafe { sys::b3Body_SetName(self.raw, name.as_ptr()) };
         Ok(())
@@ -300,11 +296,11 @@ impl<'world> Body<'world> {
     }
 
     pub fn local_center_of_mass(&self) -> Vec3 {
-        unsafe { sys::b3Body_GetLocalCenterOfMass(self.raw) }.into()
+        unsafe { sys::b3Body_GetLocalCenter(self.raw) }.into()
     }
 
     pub fn world_center_of_mass(&self) -> Vec3 {
-        unsafe { sys::b3Body_GetWorldCenterOfMass(self.raw) }.into()
+        unsafe { sys::b3Body_GetWorldCenter(self.raw) }.into()
     }
 
     pub fn set_mass_data(&self, mass_data: MassData) {

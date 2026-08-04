@@ -35,6 +35,28 @@ impl From<sys::b3Vec3> for Vec3 {
     }
 }
 
+#[cfg(box3d_double_precision)]
+impl From<Vec3> for sys::b3Pos {
+    fn from(value: Vec3) -> Self {
+        Self {
+            x: value.x as f64,
+            y: value.y as f64,
+            z: value.z as f64,
+        }
+    }
+}
+
+#[cfg(box3d_double_precision)]
+impl From<sys::b3Pos> for Vec3 {
+    fn from(value: sys::b3Pos) -> Self {
+        Self {
+            x: value.x as f32,
+            y: value.y as f32,
+            z: value.z as f32,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Quat {
     pub v: Vec3,
@@ -92,6 +114,26 @@ impl From<Transform> for sys::b3Transform {
 
 impl From<sys::b3Transform> for Transform {
     fn from(value: sys::b3Transform) -> Self {
+        Self {
+            p: value.p.into(),
+            q: value.q.into(),
+        }
+    }
+}
+
+#[cfg(box3d_double_precision)]
+impl From<Transform> for sys::b3WorldTransform {
+    fn from(value: Transform) -> Self {
+        Self {
+            p: value.p.into(),
+            q: value.q.into(),
+        }
+    }
+}
+
+#[cfg(box3d_double_precision)]
+impl From<sys::b3WorldTransform> for Transform {
+    fn from(value: sys::b3WorldTransform) -> Self {
         Self {
             p: value.p.into(),
             q: value.q.into(),
@@ -301,6 +343,7 @@ impl From<SurfaceMaterial> for sys::b3SurfaceMaterial {
             tangentVelocity: value.tangent_velocity.into(),
             userMaterialId: value.user_material_id,
             customColor: value.custom_color,
+            padding: 0,
         }
     }
 }
@@ -403,9 +446,13 @@ mod tests {
     fn value_types_round_trip_through_sys() {
         let v = Vec3::new(1.0, 2.0, 3.0);
         assert_eq!(Vec3::from(sys::b3Vec3::from(v)), v);
+        let position: sys::b3Pos = v.into();
+        assert_eq!(Vec3::from(position), v);
 
         let t = Transform::new(v, Quat::new(Vec3::new(0.1, 0.2, 0.3), 0.4));
         assert_eq!(Transform::from(sys::b3Transform::from(t)), t);
+        let world_transform: sys::b3WorldTransform = t.into();
+        assert_eq!(Transform::from(world_transform), t);
 
         let aabb = Aabb {
             lower_bound: Vec3::new(-1.0, -2.0, -3.0),
