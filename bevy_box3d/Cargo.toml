@@ -19,6 +19,7 @@ bevy_color = { version = "0.19.0" }
 bevy_ecs = { version = "0.19.0" }
 bevy_gizmos = { version = "0.19.0" }
 bevy_math = { version = "0.19.0" }
+bevy_tasks = { version = "0.19.0" }
 bevy_time = { version = "0.19.0" }
 bevy_transform = { version = "0.19.0" }
 box3d = { path = "../box3d", version = "0.2.2" }

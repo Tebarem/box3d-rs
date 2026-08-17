@@ -8,16 +8,19 @@ use bevy_ecs::prelude::{Component, Message, Resource};
 use bevy_ecs::schedule::{IntoScheduleConfigs, SingleThreadedExecutor, SystemSet};
 use bevy_gizmos::prelude::Gizmos;
 use bevy_math::Isometry3d;
+use bevy_tasks::{block_on, ComputeTaskPool, Task, TaskPool};
 use bevy_time::{Fixed, Time};
 
 use box3d::Vec3 as BoxVec3;
 use box3d::{
     BodyCreateOptions, BodyDef, BodyId, BodyType, Capacity, ContactId, ContactTuning, Filter,
-    Mesh as BoxMesh, MeshCreateOptions, Quat, ShapeDef, ShapeId, SurfaceMaterial,
-    Transform as BoxTransform, World,
+    Mesh as BoxMesh, MeshCreateOptions, Quat, ShapeDef, ShapeId, SurfaceMaterial, TaskCallback,
+    TaskSystem, Transform as BoxTransform, World,
 };
 use std::{
     collections::{HashMap, HashSet},
+    ffi::c_void,
+    ptr,
     sync::Arc,
 };
 
@@ -155,20 +158,11 @@ pub struct Box3dSensorEnded {
 }
 
 /// Bevy plugin for Box3D world ownership, body creation, stepping, and transform sync.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Box3dPlugin {
     pub config: Box3dConfig,
-    /// Run Bevy's fixed schedules on one thread so Box3D's native worker pool is not starved.
+    /// Force Bevy's fixed schedules to run on one thread.
     pub single_threaded_schedules: bool,
-}
-
-impl Default for Box3dPlugin {
-    fn default() -> Self {
-        Self {
-            config: Box3dConfig::default(),
-            single_threaded_schedules: true,
-        }
-    }
 }
 
 impl bevy_app::Plugin for Box3dPlugin {
@@ -454,6 +448,32 @@ pub struct Box3dWorld {
     interpolating: Vec<(Entity, InterpolatedTransform)>,
 }
 
+unsafe extern "C" fn enqueue_box3d_task(
+    task: Option<TaskCallback>,
+    task_context: *mut c_void,
+    _user_context: *mut c_void,
+    _task_name: *const std::ffi::c_char,
+) -> *mut c_void {
+    let Some(task) = task else {
+        return ptr::null_mut();
+    };
+
+    let task_context = task_context as usize;
+    let task = ComputeTaskPool::get_or_init(TaskPool::default).spawn(async move {
+        unsafe { task(task_context as *mut c_void) };
+    });
+    Box::into_raw(Box::new(task)).cast()
+}
+
+unsafe extern "C" fn finish_box3d_task(user_task: *mut c_void, _user_context: *mut c_void) {
+    if user_task.is_null() {
+        return;
+    }
+
+    let task = unsafe { *Box::from_raw(user_task.cast::<Task<()>>()) };
+    block_on(task);
+}
+
 #[derive(Clone, Copy, Debug, Component)]
 struct InterpolatedTransform {
     previous: BoxTransform,
@@ -462,10 +482,11 @@ struct InterpolatedTransform {
 
 impl Box3dWorld {
     pub fn new(config: Box3dConfig) -> Self {
-        let world = World::with_capacity_and_workers(
+        let world = World::with_capacity_and_workers_and_task_system(
             to_box3d_vec3(config.gravity),
             config.capacity,
             config.worker_count,
+            TaskSystem::new(enqueue_box3d_task, finish_box3d_task, ptr::null_mut()),
         );
         world.set_sleeping_enabled(config.sleeping_enabled);
         world.set_continuous_enabled(config.continuous_enabled);
@@ -1357,7 +1378,7 @@ mod tests {
         assert_eq!(world.resource::<Box3dConfig>().maximum_linear_speed, None);
         assert!(world.resource::<Box3dConfig>().warm_starting_enabled);
         assert!(world.resource::<Box3dConfig>().speculative_enabled);
-        assert!(Box3dPlugin::default().single_threaded_schedules);
+        assert!(!Box3dPlugin::default().single_threaded_schedules);
     }
 
     #[test]
@@ -1497,8 +1518,10 @@ mod tests {
 
     #[test]
     fn transform_conversion_normalizes_rotation_for_box3d() {
-        let mut transform = bevy_transform::prelude::Transform::default();
-        transform.rotation = bevy_math::Quat::from_xyzw(0.0, 0.2, 0.0, 1.0);
+        let transform = bevy_transform::prelude::Transform {
+            rotation: bevy_math::Quat::from_xyzw(0.0, 0.2, 0.0, 1.0),
+            ..Default::default()
+        };
 
         let converted = bevy_transform_to_box3d(&transform);
         let length = converted.q.v.x * converted.q.v.x
