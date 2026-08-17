@@ -1,8 +1,50 @@
 use box3d_sys as sys;
 
 use crate::world::World;
+use std::ffi::{c_char, c_void};
 
 pub const MAX_WORKERS: u32 = sys::B3_MAX_WORKERS;
+
+/// A Box3D task callback.
+pub type TaskCallback = unsafe extern "C" fn(task_context: *mut c_void);
+
+/// Enqueues a Box3D task on an external task system.
+pub type EnqueueTaskCallback = unsafe extern "C" fn(
+    task: Option<TaskCallback>,
+    task_context: *mut c_void,
+    user_context: *mut c_void,
+    task_name: *const c_char,
+) -> *mut c_void;
+
+/// Waits for an externally enqueued Box3D task to finish.
+pub type FinishTaskCallback =
+    unsafe extern "C" fn(user_task: *mut c_void, user_context: *mut c_void);
+
+/// Callbacks used to run Box3D work on an external worker pool.
+///
+/// The enqueue callback must invoke the supplied task exactly once. It may do
+/// so synchronously and return a null handle, or return a handle that the
+/// finish callback can block on.
+#[derive(Clone, Copy)]
+pub struct TaskSystem {
+    pub enqueue_task: EnqueueTaskCallback,
+    pub finish_task: FinishTaskCallback,
+    pub user_context: *mut c_void,
+}
+
+impl TaskSystem {
+    pub const fn new(
+        enqueue_task: EnqueueTaskCallback,
+        finish_task: FinishTaskCallback,
+        user_context: *mut c_void,
+    ) -> Self {
+        Self {
+            enqueue_task,
+            finish_task,
+            user_context,
+        }
+    }
+}
 
 impl World {
     pub fn set_worker_count(&self, count: u32) {

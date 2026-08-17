@@ -88,7 +88,7 @@ pub use recording::{
     validate_replay, RecPlayer, RecPlayerInfo, RecQueryHit, RecQueryInfo, RecQueryType, Recording,
 };
 pub use shape::{Shape, ShapeDef, ShapeType};
-pub use tasks::MAX_WORKERS;
+pub use tasks::{EnqueueTaskCallback, FinishTaskCallback, TaskCallback, TaskSystem, MAX_WORKERS};
 pub use world::{
     max_world_count, world_count, Capacity, ContactTuning, Counters, ExplosionDef, Profile, World,
 };

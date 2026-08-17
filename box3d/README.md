@@ -19,7 +19,7 @@ let _shape = body.create_box(
 world.step(1.0 / 60.0, 4);
 ```
 
-Feature groups include worlds/bodies/shapes, queries and standalone collision helpers, joints, events, character movement, debug draw, callbacks, recording/replay, and worker-count control.
+Feature groups include worlds/bodies/shapes, queries and standalone collision helpers, joints, events, character movement, debug draw, callbacks, recording/replay, and worker-count control. Integrations with an existing scheduler can pass a `TaskSystem` to `World::with_capacity_and_workers_and_task_system`; the enqueue callback returns a task handle and the finish callback waits for it.
 
 ## Bevy
 

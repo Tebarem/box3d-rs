@@ -8,7 +8,7 @@ use crate::{
     events::BodyId,
     handle,
     math::{Aabb, Quat, Vec3},
-    tasks::MAX_WORKERS,
+    tasks::{TaskSystem, MAX_WORKERS},
     Result,
 };
 
@@ -131,6 +131,21 @@ impl World {
             .expect("box3d returned an invalid world")
     }
 
+    pub fn with_capacity_and_workers_and_task_system(
+        gravity: Vec3,
+        capacity: Capacity,
+        worker_count: u32,
+        task_system: TaskSystem,
+    ) -> Self {
+        Self::try_with_capacity_and_workers_and_task_system(
+            gravity,
+            capacity,
+            worker_count,
+            task_system,
+        )
+        .expect("box3d returned an invalid world")
+    }
+
     pub(crate) fn raw(&self) -> sys::b3WorldId {
         self.raw
     }
@@ -152,6 +167,29 @@ impl World {
         capacity: Capacity,
         worker_count: u32,
     ) -> Result<Self> {
+        Self::try_with_capacity_and_workers_inner(gravity, capacity, worker_count, None)
+    }
+
+    pub fn try_with_capacity_and_workers_and_task_system(
+        gravity: Vec3,
+        capacity: Capacity,
+        worker_count: u32,
+        task_system: TaskSystem,
+    ) -> Result<Self> {
+        Self::try_with_capacity_and_workers_inner(
+            gravity,
+            capacity,
+            worker_count,
+            Some(task_system),
+        )
+    }
+
+    fn try_with_capacity_and_workers_inner(
+        gravity: Vec3,
+        capacity: Capacity,
+        worker_count: u32,
+        task_system: Option<TaskSystem>,
+    ) -> Result<Self> {
         if capacity.static_shape_count < 0
             || capacity.dynamic_shape_count < 0
             || capacity.static_body_count < 0
@@ -165,6 +203,11 @@ impl World {
         def.gravity = gravity.into();
         def.capacity = capacity.into();
         def.workerCount = worker_count.clamp(1, MAX_WORKERS);
+        if let Some(task_system) = task_system {
+            def.enqueueTask = Some(task_system.enqueue_task);
+            def.finishTask = Some(task_system.finish_task);
+            def.userTaskContext = task_system.user_context;
+        }
 
         let raw = handle::create_world(&def)?;
 
@@ -544,6 +587,32 @@ impl Drop for World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        ffi::c_void,
+        ptr,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    static EXTERNAL_TASK_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn run_task_immediately(
+        task: Option<crate::TaskCallback>,
+        task_context: *mut c_void,
+        _user_context: *mut c_void,
+        _task_name: *const std::ffi::c_char,
+    ) -> *mut c_void {
+        EXTERNAL_TASK_COUNT.fetch_add(1, Ordering::Relaxed);
+        if let Some(task) = task {
+            unsafe { task(task_context) };
+        }
+        ptr::null_mut()
+    }
+
+    unsafe extern "C" fn finish_task_immediately(
+        _user_task: *mut c_void,
+        _user_context: *mut c_void,
+    ) {
+    }
 
     #[test]
     fn settings_and_diagnostics_work_on_empty_world() {
@@ -667,6 +736,28 @@ mod tests {
         let world =
             World::with_capacity_and_workers(Vec3::ZERO, Capacity::default(), MAX_WORKERS + 10);
         assert_eq!(world.worker_count(), MAX_WORKERS);
+    }
+
+    #[test]
+    fn world_can_use_an_external_task_system() {
+        EXTERNAL_TASK_COUNT.store(0, Ordering::Relaxed);
+        let world = World::with_capacity_and_workers_and_task_system(
+            Vec3::ZERO,
+            Capacity::default(),
+            2,
+            TaskSystem::new(
+                run_task_immediately,
+                finish_task_immediately,
+                ptr::null_mut(),
+            ),
+        );
+
+        let body = world.create_body(BodyDef::dynamic_at(Vec3::new(0.0, 1.0, 0.0)));
+        let _shape = body.create_box(Vec3::new(0.5, 0.5, 0.5), crate::ShapeDef::default());
+        world.step(1.0 / 60.0, 4);
+
+        assert_eq!(world.worker_count(), 2);
+        assert!(EXTERNAL_TASK_COUNT.load(Ordering::Relaxed) > 0);
     }
 
     #[test]
