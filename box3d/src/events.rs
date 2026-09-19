@@ -279,6 +279,18 @@ impl PartialEq for BodyId {
 
 impl Eq for BodyId {}
 
+/// A read-only handle to a shape
+///
+/// Identifies a shape without exposing mutation operations
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct ShapeQueryHandle(u64);
+
+impl From<ShapeId> for ShapeQueryHandle {
+    fn from(shape: ShapeId) -> Self {
+        shape.handle()
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ShapeId {
     raw: sys::b3ShapeId,
@@ -287,6 +299,11 @@ pub struct ShapeId {
 impl ShapeId {
     pub(crate) fn from_raw(raw: sys::b3ShapeId) -> Self {
         Self { raw }
+    }
+
+    /// Returns a read-only identity handle for this shape
+    pub fn handle(self) -> ShapeQueryHandle {
+        ShapeQueryHandle(self.to_bits())
     }
 
     pub const fn to_bits(self) -> u64 {

@@ -14,8 +14,8 @@ use bevy_time::{Fixed, Time};
 use box3d::Vec3 as BoxVec3;
 use box3d::{
     BodyCreateOptions, BodyDef, BodyId, BodyType, Capacity, ContactId, ContactTuning, Filter,
-    Mesh as BoxMesh, MeshCreateOptions, Quat, ShapeDef, ShapeId, SurfaceMaterial, TaskCallback,
-    TaskSystem, Transform as BoxTransform, World,
+    Mesh as BoxMesh, MeshCreateOptions, Quat, ShapeDef, ShapeId, ShapeQueryHandle, SurfaceMaterial,
+    TaskCallback, TaskSystem, Transform as BoxTransform, World,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -442,7 +442,7 @@ pub struct Box3dWorld {
     body_entities: HashMap<u64, Entity>,
     shapes: HashMap<Entity, ShapeId>,
     shape_bodies: HashMap<Entity, Entity>,
-    shape_entities: HashMap<u64, Entity>,
+    shape_entities: HashMap<ShapeQueryHandle, Entity>,
     event_shapes: HashSet<Entity>,
     mesh_colliders: HashMap<Entity, BoxMesh>,
     interpolating: Vec<(Entity, InterpolatedTransform)>,
@@ -551,7 +551,7 @@ impl Box3dWorld {
 
     fn remove_shape(&mut self, entity: Entity, destroy: bool) {
         if let Some(shape) = self.shapes.remove(&entity) {
-            self.shape_entities.remove(&shape.to_bits());
+            self.shape_entities.remove(&shape.handle());
             if destroy {
                 shape.destroy(true);
             }
@@ -588,9 +588,9 @@ impl Box3dWorld {
         self.body_entities.get(&body.to_bits()).copied()
     }
 
-    /// Returns the collider entity registered for a native shape
-    pub fn shape_entity(&self, shape: ShapeId) -> Option<Entity> {
-        self.shape_entities.get(&shape.to_bits()).copied()
+    /// Returns the collider entity registered for a shape ID or query handle
+    pub fn shape_entity(&self, shape: impl Into<ShapeQueryHandle>) -> Option<Entity> {
+        self.shape_entities.get(&shape.into()).copied()
     }
 
     /// Returns the owning body entity for a registered collider
@@ -783,7 +783,7 @@ fn track_box3d_shape(
 ) {
     physics.shapes.insert(entity, shape);
     physics.shape_bodies.insert(entity, body_entity);
-    physics.shape_entities.insert(shape.to_bits(), entity);
+    physics.shape_entities.insert(shape.handle(), entity);
     if collider_events_enabled(collider) {
         physics.event_shapes.insert(entity);
     }
@@ -2029,5 +2029,47 @@ mod tests {
         assert_eq!(physics.shape_entity(new_shape), Some(collider));
         assert_eq!(physics.collider_body_entity(collider), Some(second));
         assert!(new_shape.is_valid());
+    }
+
+    #[test]
+    fn mappings_resolve_query_handles_and_remove_them_after_despawn() {
+        let mut app = mapping_test_app();
+        let entity = app
+            .world_mut()
+            .spawn((RigidBody::Static, Collider::sphere(0.5)))
+            .id();
+
+        update_mapping_test(&mut app);
+
+        let handle = {
+            let physics = app.world().non_send::<Box3dWorld>();
+            let shape_id = physics.shape_id(entity).unwrap();
+            let mut captured = None;
+
+            physics.world().cast_ray(
+                BoxVec3::new(-2.0, 0.0, 0.0),
+                BoxVec3::new(4.0, 0.0, 0.0),
+                box3d::QueryFilter::default(),
+                |hit| {
+                    let handle = hit.shape.handle();
+
+                    assert_eq!(handle, shape_id.handle());
+                    assert_eq!(physics.shape_entity(handle), Some(entity));
+
+                    captured = Some(handle);
+                    hit.fraction
+                },
+            );
+
+            let handle = captured.expect("ray should hit the collider");
+            assert_eq!(physics.shape_entity(handle), Some(entity));
+            handle
+        };
+
+        app.world_mut().entity_mut(entity).despawn();
+        update_mapping_test(&mut app);
+
+        let physics = app.world().non_send::<Box3dWorld>();
+        assert_eq!(physics.shape_entity(handle), None);
     }
 }
