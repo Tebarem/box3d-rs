@@ -129,6 +129,11 @@ impl ShapeRef<'_> {
     pub fn is_valid(self) -> bool {
         handle::is_shape_valid(self.raw)
     }
+
+    /// Returns a non-owning ID for this query hit's shape
+    pub fn id(self) -> crate::ShapeId {
+        crate::ShapeId::from_raw(self.raw)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

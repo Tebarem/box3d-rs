@@ -227,19 +227,19 @@ impl<'world> Body<'world> {
     }
 
     pub fn linear_velocity(&self) -> Vec3 {
-        unsafe { sys::b3Body_GetLinearVelocity(self.raw) }.into()
+        self.id().linear_velocity()
     }
 
     pub fn set_linear_velocity(&self, velocity: Vec3) {
-        unsafe { sys::b3Body_SetLinearVelocity(self.raw, velocity.into()) };
+        self.id().set_linear_velocity(velocity);
     }
 
     pub fn angular_velocity(&self) -> Vec3 {
-        unsafe { sys::b3Body_GetAngularVelocity(self.raw) }.into()
+        self.id().angular_velocity()
     }
 
     pub fn set_angular_velocity(&self, velocity: Vec3) {
-        unsafe { sys::b3Body_SetAngularVelocity(self.raw, velocity.into()) };
+        self.id().set_angular_velocity(velocity);
     }
 
     pub fn set_target_transform(&self, target: Transform, time_step: f32, wake: bool) {
@@ -256,31 +256,31 @@ impl<'world> Body<'world> {
     }
 
     pub fn apply_force(&self, force: Vec3, point: Vec3, wake: bool) {
-        unsafe { sys::b3Body_ApplyForce(self.raw, force.into(), point.into(), wake) };
+        self.id().apply_force(force, point, wake);
     }
 
     pub fn apply_force_to_center(&self, force: Vec3, wake: bool) {
-        unsafe { sys::b3Body_ApplyForceToCenter(self.raw, force.into(), wake) };
+        self.id().apply_force_to_center(force, wake);
     }
 
     pub fn apply_torque(&self, torque: Vec3, wake: bool) {
-        unsafe { sys::b3Body_ApplyTorque(self.raw, torque.into(), wake) };
+        self.id().apply_torque(torque, wake);
     }
 
     pub fn apply_linear_impulse(&self, impulse: Vec3, point: Vec3, wake: bool) {
-        unsafe { sys::b3Body_ApplyLinearImpulse(self.raw, impulse.into(), point.into(), wake) };
+        self.id().apply_linear_impulse(impulse, point, wake);
     }
 
     pub fn apply_linear_impulse_to_center(&self, impulse: Vec3, wake: bool) {
-        unsafe { sys::b3Body_ApplyLinearImpulseToCenter(self.raw, impulse.into(), wake) };
+        self.id().apply_linear_impulse_to_center(impulse, wake);
     }
 
     pub fn apply_angular_impulse(&self, impulse: Vec3, wake: bool) {
-        unsafe { sys::b3Body_ApplyAngularImpulse(self.raw, impulse.into(), wake) };
+        self.id().apply_angular_impulse(impulse, wake);
     }
 
     pub fn mass(&self) -> f32 {
-        unsafe { sys::b3Body_GetMass(self.raw) }
+        self.id().mass()
     }
 
     pub fn local_rotational_inertia(&self) -> Matrix3 {
@@ -338,11 +338,11 @@ impl<'world> Body<'world> {
     }
 
     pub fn set_awake(&self, awake: bool) {
-        unsafe { sys::b3Body_SetAwake(self.raw, awake) };
+        self.id().set_awake(awake);
     }
 
     pub fn is_awake(&self) -> bool {
-        unsafe { sys::b3Body_IsAwake(self.raw) }
+        self.id().is_awake()
     }
 
     pub fn set_sleep_enabled(&self, enabled: bool) {

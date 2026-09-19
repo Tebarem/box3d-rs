@@ -531,14 +531,11 @@ impl Box3dWorld {
     }
 
     fn body(&self, entity: Entity) -> Option<BodyId> {
-        self.bodies.get(&entity).copied()
+        self.body_id(entity)
     }
 
     fn shape_pair(&self, shape_a: ShapeId, shape_b: ShapeId) -> Option<(Entity, Entity)> {
-        Some((
-            *self.shape_entities.get(&shape_a.to_bits())?,
-            *self.shape_entities.get(&shape_b.to_bits())?,
-        ))
+        Some((self.shape_entity(shape_a)?, self.shape_entity(shape_b)?))
     }
 
     fn remove_body(&mut self, entity: Entity) -> Vec<Entity> {
@@ -574,6 +571,31 @@ impl Box3dWorld {
             self.remove_shape(*shape_entity, destroy);
         }
         shapes
+    }
+
+    /// Returns the native handle registered for a body entity
+    pub fn body_id(&self, entity: Entity) -> Option<BodyId> {
+        self.bodies.get(&entity).copied()
+    }
+
+    /// Returns the native handle registered for a collider entity
+    pub fn shape_id(&self, entity: Entity) -> Option<ShapeId> {
+        self.shapes.get(&entity).copied()
+    }
+
+    /// Returns the entity registered for a native body
+    pub fn body_entity(&self, body: BodyId) -> Option<Entity> {
+        self.body_entities.get(&body.to_bits()).copied()
+    }
+
+    /// Returns the collider entity registered for a native shape
+    pub fn shape_entity(&self, shape: ShapeId) -> Option<Entity> {
+        self.shape_entities.get(&shape.to_bits()).copied()
+    }
+
+    /// Returns the owning body entity for a registered collider
+    pub fn collider_body_entity(&self, collider: Entity) -> Option<Entity> {
+        self.shape_bodies.get(&collider).copied()
     }
 }
 
