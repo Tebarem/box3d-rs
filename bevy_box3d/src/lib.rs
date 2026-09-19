@@ -1839,4 +1839,195 @@ mod tests {
         assert!((transform.translation - Vec3::new(1.0, 3.0, 3.0)).length() < 0.0001);
         assert_eq!(transform.scale, Vec3::ONE);
     }
+
+    fn mapping_test_app() -> bevy_app::App {
+        let mut app = bevy_app::App::new();
+        app.add_plugins(bevy_time::TimePlugin)
+            .insert_resource(bevy_time::TimeUpdateStrategy::FixedTimesteps(1))
+            .add_plugins(Box3dPlugin {
+                config: Box3dConfig {
+                    gravity: Vec3::ZERO,
+                    worker_count: 1,
+                    ..Box3dConfig::default()
+                },
+                ..Box3dPlugin::default()
+            });
+        app
+    }
+
+    fn update_mapping_test(app: &mut bevy_app::App) {
+        for _ in 0..3 {
+            app.update();
+        }
+    }
+
+    #[test]
+    fn mappings_round_trip() {
+        let mut app = mapping_test_app();
+        let body = app
+            .world_mut()
+            .spawn((RigidBody::Static, Collider::sphere(0.5)))
+            .id();
+        let collider = app
+            .world_mut()
+            .spawn((Collider::sphere(0.25), ColliderParent(body)))
+            .id();
+        let unrelated = app.world_mut().spawn_empty().id();
+
+        update_mapping_test(&mut app);
+
+        let physics = app.world().non_send::<Box3dWorld>();
+        let body_id = physics.body_id(body).unwrap();
+        assert!(body_id.is_valid());
+        assert_eq!(physics.body_entity(body_id), Some(body));
+        assert_eq!(physics.body_id(collider), None);
+
+        for entity in [body, collider] {
+            let shape_id = physics.shape_id(entity).unwrap();
+            assert!(shape_id.is_valid());
+            assert_eq!(physics.shape_entity(shape_id), Some(entity));
+            assert_eq!(physics.collider_body_entity(entity), Some(body));
+        }
+
+        assert_ne!(physics.shape_id(body), physics.shape_id(collider));
+        assert_eq!(physics.body_id(unrelated), None);
+        assert_eq!(physics.shape_id(unrelated), None);
+        assert_eq!(physics.collider_body_entity(unrelated), None);
+    }
+
+    #[test]
+    fn mappings_clean_up_despawned_collider() {
+        let mut app = mapping_test_app();
+        let body = app.world_mut().spawn(RigidBody::Static).id();
+        let collider = app
+            .world_mut()
+            .spawn((Collider::sphere(0.5), ColliderParent(body)))
+            .id();
+
+        update_mapping_test(&mut app);
+
+        let (body_id, shape_id) = {
+            let physics = app.world().non_send::<Box3dWorld>();
+            (
+                physics.body_id(body).unwrap(),
+                physics.shape_id(collider).unwrap(),
+            )
+        };
+
+        app.world_mut().entity_mut(collider).despawn();
+        update_mapping_test(&mut app);
+
+        let physics = app.world().non_send::<Box3dWorld>();
+        assert_eq!(physics.shape_id(collider), None);
+        assert_eq!(physics.shape_entity(shape_id), None);
+        assert_eq!(physics.collider_body_entity(collider), None);
+        assert!(!shape_id.is_valid());
+
+        assert_eq!(physics.body_id(body), Some(body_id));
+        assert_eq!(physics.body_entity(body_id), Some(body));
+        assert!(body_id.is_valid());
+    }
+
+    #[test]
+    fn mappings_clean_up_despawned_body_and_owned_shapes() {
+        let mut app = mapping_test_app();
+        let body = app
+            .world_mut()
+            .spawn((RigidBody::Static, Collider::sphere(0.5)))
+            .id();
+        let collider = app
+            .world_mut()
+            .spawn((Collider::sphere(0.25), ColliderParent(body)))
+            .id();
+
+        update_mapping_test(&mut app);
+
+        let (body_id, own_shape, child_shape) = {
+            let physics = app.world().non_send::<Box3dWorld>();
+            (
+                physics.body_id(body).unwrap(),
+                physics.shape_id(body).unwrap(),
+                physics.shape_id(collider).unwrap(),
+            )
+        };
+
+        app.world_mut().entity_mut(body).despawn();
+        update_mapping_test(&mut app);
+
+        // ColliderParent does not recursively despawn the collider entity
+        assert!(app.world().entity(collider).contains::<Collider>());
+        assert!(!app.world().entity(collider).contains::<Box3dShape>());
+
+        let physics = app.world().non_send::<Box3dWorld>();
+        assert_eq!(physics.body_id(body), None);
+        assert_eq!(physics.body_entity(body_id), None);
+        assert!(!body_id.is_valid());
+
+        for (entity, shape) in [(body, own_shape), (collider, child_shape)] {
+            assert_eq!(physics.shape_id(entity), None);
+            assert_eq!(physics.shape_entity(shape), None);
+            assert_eq!(physics.collider_body_entity(entity), None);
+            assert!(!shape.is_valid());
+        }
+    }
+
+    #[test]
+    fn mappings_follow_collider_reparenting() {
+        let mut app = mapping_test_app();
+        let first = app.world_mut().spawn(RigidBody::Static).id();
+        let second = app.world_mut().spawn(RigidBody::Static).id();
+        let collider = app
+            .world_mut()
+            .spawn((Collider::sphere(0.5), ColliderParent(first)))
+            .id();
+
+        update_mapping_test(&mut app);
+
+        let (first_id, second_id, old_shape) = {
+            let physics = app.world().non_send::<Box3dWorld>();
+            assert_eq!(physics.collider_body_entity(collider), Some(first));
+            (
+                physics.body_id(first).unwrap(),
+                physics.body_id(second).unwrap(),
+                physics.shape_id(collider).unwrap(),
+            )
+        };
+
+        app.world_mut()
+            .entity_mut(collider)
+            .insert(ColliderParent(second));
+        update_mapping_test(&mut app);
+
+        let new_shape = {
+            let physics = app.world().non_send::<Box3dWorld>();
+            let new_shape = physics.shape_id(collider).unwrap();
+
+            // Reparenting replaces the native shape and removes its old mapping
+            assert_ne!(new_shape, old_shape);
+            assert!(!old_shape.is_valid());
+            assert!(new_shape.is_valid());
+            assert_eq!(physics.shape_entity(old_shape), None);
+            assert_eq!(physics.shape_entity(new_shape), Some(collider));
+            assert_eq!(physics.collider_body_entity(collider), Some(second));
+
+            for (entity, id) in [(first, first_id), (second, second_id)] {
+                assert_eq!(physics.body_id(entity), Some(id));
+                assert_eq!(physics.body_entity(id), Some(entity));
+            }
+
+            new_shape
+        };
+
+        // Removing the previous owner must leave the reparented collider intact
+        app.world_mut().entity_mut(first).despawn();
+        update_mapping_test(&mut app);
+
+        let physics = app.world().non_send::<Box3dWorld>();
+        assert_eq!(physics.body_entity(first_id), None);
+        assert_eq!(physics.body_id(second), Some(second_id));
+        assert_eq!(physics.shape_id(collider), Some(new_shape));
+        assert_eq!(physics.shape_entity(new_shape), Some(collider));
+        assert_eq!(physics.collider_body_entity(collider), Some(second));
+        assert!(new_shape.is_valid());
+    }
 }
