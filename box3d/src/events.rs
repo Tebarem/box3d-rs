@@ -82,8 +82,19 @@ impl BodyId {
     }
 
     pub fn wake(self) {
-        assert!(self.is_valid());
-        unsafe { sys::b3Body_SetAwake(self.raw, true) };
+        self.set_awake(true);
+    }
+
+    /// Wakes the body or puts it to sleep
+    pub fn set_awake(self, awake: bool) {
+        assert!(self.is_valid(), "invalid Box3D body handle");
+        unsafe { sys::b3Body_SetAwake(self.raw, awake) };
+    }
+
+    /// Returns whether the body is awake
+    pub fn is_awake(self) -> bool {
+        assert!(self.is_valid(), "invalid Box3D body handle");
+        unsafe { sys::b3Body_IsAwake(self.raw) }
     }
 
     pub fn transform(self) -> Option<Transform> {
@@ -96,14 +107,68 @@ impl BodyId {
         unsafe { sys::b3Body_SetTransform(self.raw, position.into(), rotation.into()) };
     }
 
+    /// Returns the linear velocity of the center of mass
+    pub fn linear_velocity(self) -> Vec3 {
+        assert!(self.is_valid(), "invalid Box3D body handle");
+        unsafe { sys::b3Body_GetLinearVelocity(self.raw) }.into()
+    }
+
     pub fn set_linear_velocity(self, velocity: Vec3) {
         assert!(self.is_valid());
         unsafe { sys::b3Body_SetLinearVelocity(self.raw, velocity.into()) };
     }
 
+    /// Returns the angular velocity in radians per second
+    pub fn angular_velocity(self) -> Vec3 {
+        assert!(self.is_valid(), "invalid Box3D body handle");
+        unsafe { sys::b3Body_GetAngularVelocity(self.raw) }.into()
+    }
+
     pub fn set_angular_velocity(self, velocity: Vec3) {
         assert!(self.is_valid());
         unsafe { sys::b3Body_SetAngularVelocity(self.raw, velocity.into()) };
+    }
+
+    /// Applies a world-space force at a world-space point
+    pub fn apply_force(self, force: Vec3, point: Vec3, wake: bool) {
+        assert!(self.is_valid(), "invalid Box3D body handle");
+        unsafe { sys::b3Body_ApplyForce(self.raw, force.into(), point.into(), wake) };
+    }
+
+    /// Applies a world-space force at the center of mass
+    pub fn apply_force_to_center(self, force: Vec3, wake: bool) {
+        assert!(self.is_valid(), "invalid Box3D body handle");
+        unsafe { sys::b3Body_ApplyForceToCenter(self.raw, force.into(), wake) };
+    }
+
+    /// Applies a world-space torque
+    pub fn apply_torque(self, torque: Vec3, wake: bool) {
+        assert!(self.is_valid(), "invalid Box3D body handle");
+        unsafe { sys::b3Body_ApplyTorque(self.raw, torque.into(), wake) };
+    }
+
+    /// Applies a world-space linear impulse at a world-space point
+    pub fn apply_linear_impulse(self, impulse: Vec3, point: Vec3, wake: bool) {
+        assert!(self.is_valid(), "invalid Box3D body handle");
+        unsafe { sys::b3Body_ApplyLinearImpulse(self.raw, impulse.into(), point.into(), wake) };
+    }
+
+    /// Applies a world-space linear impulse at the center of mass
+    pub fn apply_linear_impulse_to_center(self, impulse: Vec3, wake: bool) {
+        assert!(self.is_valid(), "invalid Box3D body handle");
+        unsafe { sys::b3Body_ApplyLinearImpulseToCenter(self.raw, impulse.into(), wake) };
+    }
+
+    /// Applies a world-space angular impulse
+    pub fn apply_angular_impulse(self, impulse: Vec3, wake: bool) {
+        assert!(self.is_valid(), "invalid Box3D body handle");
+        unsafe { sys::b3Body_ApplyAngularImpulse(self.raw, impulse.into(), wake) };
+    }
+
+    /// Returns the body mass
+    pub fn mass(self) -> f32 {
+        assert!(self.is_valid(), "invalid Box3D body handle");
+        unsafe { sys::b3Body_GetMass(self.raw) }
     }
 
     pub fn set_linear_damping(self, damping: f32) {
@@ -214,6 +279,18 @@ impl PartialEq for BodyId {
 
 impl Eq for BodyId {}
 
+/// A read-only handle to a shape
+///
+/// Identifies a shape without exposing mutation operations
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct ShapeQueryHandle(u64);
+
+impl From<ShapeId> for ShapeQueryHandle {
+    fn from(shape: ShapeId) -> Self {
+        shape.handle()
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ShapeId {
     raw: sys::b3ShapeId,
@@ -222,6 +299,11 @@ pub struct ShapeId {
 impl ShapeId {
     pub(crate) fn from_raw(raw: sys::b3ShapeId) -> Self {
         Self { raw }
+    }
+
+    /// Returns a read-only identity handle for this shape
+    pub fn handle(self) -> ShapeQueryHandle {
+        ShapeQueryHandle(self.to_bits())
     }
 
     pub const fn to_bits(self) -> u64 {

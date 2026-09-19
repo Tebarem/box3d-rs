@@ -62,7 +62,7 @@ pub use error::{Error, Result};
 pub use events::{
     BodyEvents, BodyId, BodyMoveEvent, ContactEvents, ContactHitEvent, ContactId,
     ContactTouchEvent, JointEvent, JointEvents, JointId, ParallelJointIdDef, SensorEvents,
-    SensorTouchEvent, ShapeId, WheelJointIdDef, WorldId,
+    SensorTouchEvent, ShapeId, ShapeQueryHandle, WheelJointIdDef, WorldId,
 };
 pub use hull::{BoxHull, Hull, HullRef};
 pub use joint::{

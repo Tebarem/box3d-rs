@@ -129,6 +129,13 @@ impl ShapeRef<'_> {
     pub fn is_valid(self) -> bool {
         handle::is_shape_valid(self.raw)
     }
+
+    /// Returns a read-only identity handle for this query hit's shape
+    ///
+    /// The handle can be retained after the callback but does not keep the shape alive
+    pub fn handle(self) -> crate::ShapeQueryHandle {
+        crate::ShapeId::from_raw(self.raw).handle()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
