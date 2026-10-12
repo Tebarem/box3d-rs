@@ -278,17 +278,20 @@ impl From<sys::b3TriangleFeature> for TriangleFeature {
 pub struct MeshEdgeFlags(pub i32);
 
 impl MeshEdgeFlags {
-    pub const CONCAVE_EDGE1: Self = Self(sys::b3MeshEdgeFlags_b3_concaveEdge1);
-    pub const CONCAVE_EDGE2: Self = Self(sys::b3MeshEdgeFlags_b3_concaveEdge2);
-    pub const CONCAVE_EDGE3: Self = Self(sys::b3MeshEdgeFlags_b3_concaveEdge3);
-    pub const INVERSE_CONCAVE_EDGE1: Self = Self(sys::b3MeshEdgeFlags_b3_inverseConcaveEdge1);
-    pub const INVERSE_CONCAVE_EDGE2: Self = Self(sys::b3MeshEdgeFlags_b3_inverseConcaveEdge2);
-    pub const INVERSE_CONCAVE_EDGE3: Self = Self(sys::b3MeshEdgeFlags_b3_inverseConcaveEdge3);
-    pub const ALL_CONCAVE_EDGES: Self = Self(sys::b3MeshEdgeFlags_b3_allConcaveEdges);
-    pub const FLAT_EDGE1: Self = Self(sys::b3MeshEdgeFlags_b3_flatEdge1);
-    pub const FLAT_EDGE2: Self = Self(sys::b3MeshEdgeFlags_b3_flatEdge2);
-    pub const FLAT_EDGE3: Self = Self(sys::b3MeshEdgeFlags_b3_flatEdge3);
-    pub const ALL_FLAT_EDGES: Self = Self(sys::b3MeshEdgeFlags_b3_allFlatEdges);
+    pub const CONCAVE_EDGE1: Self = Self(sys::b3MeshEdgeFlags_b3_concaveEdge1 as i32);
+    pub const CONCAVE_EDGE2: Self = Self(sys::b3MeshEdgeFlags_b3_concaveEdge2 as i32);
+    pub const CONCAVE_EDGE3: Self = Self(sys::b3MeshEdgeFlags_b3_concaveEdge3 as i32);
+    pub const INVERSE_CONCAVE_EDGE1: Self =
+        Self(sys::b3MeshEdgeFlags_b3_inverseConcaveEdge1 as i32);
+    pub const INVERSE_CONCAVE_EDGE2: Self =
+        Self(sys::b3MeshEdgeFlags_b3_inverseConcaveEdge2 as i32);
+    pub const INVERSE_CONCAVE_EDGE3: Self =
+        Self(sys::b3MeshEdgeFlags_b3_inverseConcaveEdge3 as i32);
+    pub const ALL_CONCAVE_EDGES: Self = Self(sys::b3MeshEdgeFlags_b3_allConcaveEdges as i32);
+    pub const FLAT_EDGE1: Self = Self(sys::b3MeshEdgeFlags_b3_flatEdge1 as i32);
+    pub const FLAT_EDGE2: Self = Self(sys::b3MeshEdgeFlags_b3_flatEdge2 as i32);
+    pub const FLAT_EDGE3: Self = Self(sys::b3MeshEdgeFlags_b3_flatEdge3 as i32);
+    pub const ALL_FLAT_EDGES: Self = Self(sys::b3MeshEdgeFlags_b3_allFlatEdges as i32);
 
     pub const fn bits(self) -> i32 {
         self.0

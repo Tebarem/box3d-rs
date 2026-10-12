@@ -291,7 +291,7 @@ impl From<sys::b3RecQueryType> for RecQueryType {
             sys::b3RecQueryType_b3_recQueryCastRayClosest => Self::CastRayClosest,
             sys::b3RecQueryType_b3_recQueryCastMover => Self::CastMover,
             sys::b3RecQueryType_b3_recQueryCollideMover => Self::CollideMover,
-            _ => Self::Unknown(value),
+            _ => Self::Unknown(value as i32),
         }
     }
 }
