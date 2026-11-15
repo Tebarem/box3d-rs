@@ -2,7 +2,7 @@
 
 Bevy integration for `box3d`.
 
-Supports Bevy 0.19 and Rust 1.95+.
+Supports Bevy 0.20.1 and Rust 1.97.1+.
 
 ```rust
 use bevy::prelude::*;
