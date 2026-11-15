@@ -27,7 +27,7 @@ use std::{
 pub use bevy_math::Vec3;
 
 /// Bevy minor version supported by this integration.
-pub const SUPPORTED_BEVY_VERSION: &str = "0.19";
+pub const SUPPORTED_BEVY_VERSION: &str = "0.20";
 
 /// Public system sets for ordering gameplay around Box3D.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]

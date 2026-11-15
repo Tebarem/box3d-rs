@@ -3,7 +3,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use bevy::{
     asset::RenderAssetUsages,
     diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin},
-    math::primitives::{Cuboid, Sphere},
     mesh::Indices,
     prelude::*,
     render::render_resource::PrimitiveTopology,

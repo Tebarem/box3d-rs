@@ -1,6 +1,5 @@
 use bevy::{
     diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin},
-    math::primitives::{Cuboid, Sphere},
     prelude::*,
 };
 use bevy_box3d::{

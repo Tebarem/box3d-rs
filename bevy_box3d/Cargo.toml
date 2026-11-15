@@ -2,7 +2,7 @@
 name = "bevy_box3d"
 version = "0.4.1"
 edition = "2021"
-rust-version = "1.95"
+rust-version = "1.97.1"
 autoexamples = false
 description = "Bevy integration for Box3D."
 license = "MIT"
@@ -14,18 +14,18 @@ default = []
 double-precision = ["box3d/double-precision"]
 
 [dependencies]
-bevy_app = { version = "0.19.0" }
-bevy_color = { version = "0.19.0" }
-bevy_ecs = { version = "0.19.0" }
-bevy_gizmos = { version = "0.19.0" }
-bevy_math = { version = "0.19.0" }
-bevy_tasks = { version = "0.19.0" }
-bevy_time = { version = "0.19.0" }
-bevy_transform = { version = "0.19.0" }
+bevy_app = { version = "0.20.1" }
+bevy_color = { version = "0.20.1" }
+bevy_ecs = { version = "0.20.1" }
+bevy_gizmos = { version = "0.20.1" }
+bevy_math = { version = "0.20.1" }
+bevy_tasks = { version = "0.20.1" }
+bevy_time = { version = "0.20.1" }
+bevy_transform = { version = "0.20.1" }
 box3d = { path = "../box3d", version = "0.3.1" }
 
 [dev-dependencies]
-bevy = { version = "0.19.0", default-features = false, features = ["3d", "ui"] }
+bevy = { version = "0.20.1", default-features = false, features = ["3d", "ui"] }
 
 [[example]]
 name = "bevy_stack"
